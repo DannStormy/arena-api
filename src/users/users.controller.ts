@@ -1,8 +1,9 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Patch, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Patch, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
@@ -12,13 +13,18 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
+import { PaystackService } from '../services/paystack/paystack.service';
 
 @ApiTags('Users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly paystackService: PaystackService,
+  ) {}
 
   @Get('me')
   @ApiOperation({ summary: 'Get current user profile' })
@@ -37,5 +43,35 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ): Promise<{ success: true }> {
     return this.usersService.updateMe(user.sub, dto);
+  }
+
+  @Patch('me/bank-details')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update current user bank details' })
+  @ApiBody({ type: UpdateBankDetailsDto })
+  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  async updateBankDetails(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateBankDetailsDto,
+  ): Promise<{ success: true }> {
+    return this.usersService.updateBankDetails(user.sub, dto);
+  }
+
+  @Get('bank/resolve')
+  @ApiOperation({ summary: 'Resolve a bank account number to account name' })
+  @ApiQuery({ name: 'accountNumber', required: true, type: String })
+  @ApiQuery({ name: 'bankCode', required: true, type: String })
+  @ApiResponse({ status: 200, schema: { example: { accountName: 'John Doe' } } })
+  @ApiResponse({ status: 400, description: 'Invalid account number or bank code' })
+  async resolveBankAccount(
+    @Query('accountNumber') accountNumber: string,
+    @Query('bankCode') bankCode: string,
+  ): Promise<{ accountName: string }> {
+    try {
+      const accountName = await this.paystackService.resolveAccount(accountNumber, bankCode);
+      return { accountName };
+    } catch {
+      throw new BadRequestException('Could not resolve account. Check the account number and bank code.');
+    }
   }
 }

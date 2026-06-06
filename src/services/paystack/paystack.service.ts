@@ -1,6 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { PaystackInitializeResponse, PaystackVerifyResponse } from './types/paystack.types';
+import {
+  PaystackBank,
+  PaystackBanksResponse,
+  PaystackInitializeResponse,
+  PaystackResolveAccountResponse,
+  PaystackVerifyResponse,
+} from './types/paystack.types';
 
 @Injectable()
 export class PaystackService {
@@ -44,5 +50,35 @@ export class PaystackService {
     this.logger.log(`Paystack verify: ref=${reference} status=${data.data?.status}`);
 
     return data;
+  }
+
+  async getBanks(): Promise<PaystackBank[]> {
+    const secretKey = this.config.get<string>('PAYSTACK_SECRET_KEY');
+
+    const response = await fetch(`${this.baseUrl}/bank?currency=NGN`, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+    });
+
+    const data = (await response.json()) as PaystackBanksResponse;
+
+    return data.data.map(({ name, code }) => ({ name, code }));
+  }
+
+  async resolveAccount(accountNumber: string, bankCode: string): Promise<string> {
+    const secretKey = this.config.get<string>('PAYSTACK_SECRET_KEY');
+
+    bankCode = this.config.get<string>('NODE_ENV') !== 'production' ? '001' : bankCode;
+    const url = `${this.baseUrl}/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`;
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+    });
+
+    const data = (await response.json()) as PaystackResolveAccountResponse;
+
+    if (!data.status) {
+      throw new Error(data.message);
+    }
+
+    return data.data.account_name;
   }
 }

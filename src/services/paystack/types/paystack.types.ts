@@ -42,3 +42,23 @@ export interface PaystackVerifyResponse {
   message: string;
   data: PaystackVerifyData;
 }
+
+export interface PaystackBank {
+  name: string;
+  code: string;
+}
+
+export interface PaystackResolveAccountResponse {
+  status: boolean;
+  message: string;
+  data: {
+    account_number: string;
+    account_name: string;
+  };
+}
+
+export interface PaystackBanksResponse {
+  status: boolean;
+  message: string;
+  data: Array<{ name: string; code: string; [key: string]: unknown }>;
+}

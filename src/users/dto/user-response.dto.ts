@@ -17,6 +17,15 @@ export class UserResponseDto {
   @ApiPropertyOptional()
   avatarUrl: string;
 
+  @ApiPropertyOptional()
+  bankAccountNumber: string | null;
+
+  @ApiPropertyOptional()
+  bankCode: string | null;
+
+  @ApiPropertyOptional()
+  bankAccountName: string | null;
+
   @ApiProperty()
   referralCode: string;
 
@@ -46,6 +55,9 @@ export class UserResponseDto {
     dto.username = user.username;
     dto.phone = user.phone;
     dto.avatarUrl = user.avatarUrl;
+    dto.bankAccountNumber = user.bankAccountNumber;
+    dto.bankCode = user.bankCode;
+    dto.bankAccountName = user.bankAccountName;
     dto.referralCode = user.referralCode;
     dto.referredBy = user.referredBy;
     dto.isVerified = user.isVerified;

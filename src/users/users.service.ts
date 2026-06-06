@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { UserResponseDto } from './dto/user-response.dto';
 
 @Injectable()
@@ -63,6 +64,13 @@ export class UsersService {
 
     this.logger.log(`User updated: ${userId}`);
 
+    return { success: true };
+  }
+
+  async updateBankDetails(userId: string, dto: UpdateBankDetailsDto): Promise<{ success: true }> {
+    await this.findById(userId);
+    await this.usersRepo.update(userId, dto);
+    this.logger.log(`Bank details updated: ${userId}`);
     return { success: true };
   }
 }

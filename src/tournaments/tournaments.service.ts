@@ -180,7 +180,7 @@ export class TournamentsService {
       .select([
         'e.userId       AS "userId"',
         'e.score        AS "score"',
-        'e.prizeWon     AS "prizeWon"',
+        'e.prize_won    AS "prizeWon"',
         'u.username     AS "username"',
         'u.avatarUrl    AS "avatarUrl"',
       ])
@@ -252,11 +252,7 @@ export class TournamentsService {
     return { success: true };
   }
 
-  async updateEntryScore(
-    tournamentId: string,
-    userId: string,
-    score: number,
-  ): Promise<void> {
+  async updateEntryScore(tournamentId: string, userId: string, score: number): Promise<void> {
     await this.entriesRepo
       .createQueryBuilder()
       .update(TournamentEntry)

@@ -21,7 +21,7 @@ export class LeaderboardService {
     const qb = this.entriesRepo
       .createQueryBuilder('e')
       .select('e.userId', 'userId')
-      .addSelect('COALESCE(SUM(e.prizeWon::numeric), 0)', 'totalPrizeWon')
+      .addSelect('COALESCE(SUM(CAST(e.prize_won AS numeric)), 0)', 'totalPrizeWon')
       .addSelect('COUNT(DISTINCT e.tournamentId)', 'tournamentsPlayed')
       .groupBy('e.userId')
       .orderBy('"totalPrizeWon"', 'DESC')
@@ -41,10 +41,7 @@ export class LeaderboardService {
 
     const users =
       userIds.length > 0
-        ? await this.usersRepo
-            .createQueryBuilder('u')
-            .whereInIds(userIds)
-            .getMany()
+        ? await this.usersRepo.createQueryBuilder('u').whereInIds(userIds).getMany()
         : [];
 
     const userMap = new Map(users.map((u) => [u.id, u]));

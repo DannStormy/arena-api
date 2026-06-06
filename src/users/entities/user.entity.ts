@@ -26,6 +26,15 @@ export class User {
   @Column({ nullable: true })
   avatarUrl: string;
 
+  @Column({ type: 'varchar', nullable: true })
+  bankAccountNumber: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  bankCode: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  bankAccountName: string | null;
+
   @Column({ unique: true })
   referralCode: string;
 
