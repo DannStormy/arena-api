@@ -23,14 +23,42 @@ export class QuestionsService {
     private readonly historyRepo: Repository<UserQuestionHistory>,
   ) {}
 
-  async bulkCreate(dtos: CreateQuestionDto[]): Promise<{ created: number }> {
-    const entities = this.questionsRepo.create(dtos);
+  async bulkCreate(questions: CreateQuestionDto[]): Promise<{ created: number; skipped: number }> {
+    const normalize = (s: string) => s.toLowerCase().trim();
 
-    await this.questionsRepo.insert(entities);
+    const existing = await this.questionsRepo.find({
+      where: questions.map((q) => ({ content: q.content, category: q.category })),
+      select: { content: true, category: true },
+    });
 
-    this.logger.log(`Bulk created ${entities.length} questions`);
+    const existingSet = new Set(existing.map((e) => `${e.category}::${normalize(e.content)}`));
 
-    return { created: entities.length };
+    const toInsert = questions.filter(
+      (q) => !existingSet.has(`${q.category}::${normalize(q.content)}`),
+    );
+
+    if (toInsert.length === 0) {
+      return { created: 0, skipped: questions.length };
+    }
+
+    try {
+      await this.questionsRepo.insert(toInsert.map((q) => this.questionsRepo.create(q)));
+    } catch (err: unknown) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code: string }).code === '23505'
+      ) {
+        this.logger.warn(`Bulk create unique violation — treating all as skipped`);
+        return { created: 0, skipped: questions.length };
+      }
+      throw err;
+    }
+
+    this.logger.log(`Bulk create: inserted=${toInsert.length} skipped=${questions.length - toInsert.length}`);
+
+    return { created: toInsert.length, skipped: questions.length - toInsert.length };
   }
 
   async list(params: {

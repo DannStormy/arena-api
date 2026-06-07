@@ -235,13 +235,11 @@ export class GameSessionsService {
       completedAt,
     });
 
-    if (!session.isFlagged) {
-      await this.tournamentsService.updateEntryScore(
-        session.tournamentId,
-        session.userId,
-        session.score,
-      );
-    }
+    await this.tournamentsService.updateEntryScore(
+      session.tournamentId,
+      session.userId,
+      session.score,
+    );
 
     const answers = await this.answersRepo.find({ where: { sessionId } });
 

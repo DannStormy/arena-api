@@ -45,6 +45,24 @@ export class UsersController {
     return this.usersService.updateMe(user.sub, dto);
   }
 
+  @Get('me/stats')
+  @ApiOperation({ summary: 'Get current user stats' })
+  @ApiResponse({
+    status: 200,
+    schema: {
+      example: {
+        tournamentsPlayed: 5,
+        questionsAnswered: 50,
+        correctAnswers: 38,
+        accuracy: 76,
+        totalPrizeWon: '2500.00',
+      },
+    },
+  })
+  async getMyStats(@CurrentUser() user: JwtPayload) {
+    return this.usersService.getMyStats(user.sub);
+  }
+
   @Patch('me/bank-details')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update current user bank details' })

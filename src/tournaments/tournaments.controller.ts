@@ -71,6 +71,7 @@ export class TournamentsController {
   @ApiOperation({ summary: 'List tournaments (paginated, filterable)' })
   @ApiResponse({ status: 200, type: PaginatedResponseDto })
   async list(
+    @CurrentUser() user: JwtPayload,
     @Query() query: TournamentQueryDto,
   ): Promise<PaginatedResponseDto<TournamentListItemDto>> {
     return this.tournamentsService.list({
@@ -81,6 +82,7 @@ export class TournamentsController {
       arena: query.arena,
       status: query.status,
       gameType: query.gameType,
+      userId: user.sub,
     });
   }
 
@@ -89,9 +91,10 @@ export class TournamentsController {
   @ApiResponse({ status: 200, type: TournamentResponseDto })
   @ApiResponse({ status: 404, description: 'Tournament not found' })
   async findOne(
+    @CurrentUser() user: JwtPayload,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<TournamentResponseDto> {
-    return this.tournamentsService.findOne(id);
+    return this.tournamentsService.findOne(id, user.sub);
   }
 
   @Post()

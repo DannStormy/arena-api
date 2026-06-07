@@ -21,10 +21,11 @@ export class LeaderboardService {
     const qb = this.entriesRepo
       .createQueryBuilder('e')
       .select('e.userId', 'userId')
-      .addSelect('COALESCE(SUM(CAST(e.prize_won AS numeric)), 0)', 'totalPrizeWon')
+      .addSelect('COALESCE(SUM(e.score), 0)::int', 'totalScore')
+      .addSelect('COALESCE(SUM(CAST(e."prizeWon" AS numeric)), 0)', 'totalPrizeWon')
       .addSelect('COUNT(DISTINCT e.tournamentId)', 'tournamentsPlayed')
       .groupBy('e.userId')
-      .orderBy('"totalPrizeWon"', 'DESC')
+      .orderBy('"totalScore"', 'DESC')
       .limit(50);
 
     if (arena) {
@@ -33,6 +34,7 @@ export class LeaderboardService {
 
     const rows = await qb.getRawMany<{
       userId: string;
+      totalScore: string;
       totalPrizeWon: string;
       tournamentsPlayed: string;
     }>();
@@ -54,6 +56,7 @@ export class LeaderboardService {
       dto.userId = row.userId;
       dto.username = user?.username ?? '';
       dto.avatarUrl = user?.avatarUrl ?? '';
+      dto.totalScore = Number(row.totalScore);
       dto.totalPrizeWon = row.totalPrizeWon;
       dto.tournamentsPlayed = parseInt(row.tournamentsPlayed, 10);
 

@@ -5,6 +5,8 @@ import {
   PaystackBanksResponse,
   PaystackInitializeResponse,
   PaystackResolveAccountResponse,
+  PaystackTransferRecipientResponse,
+  PaystackTransferResponse,
   PaystackVerifyResponse,
 } from './types/paystack.types';
 
@@ -80,5 +82,58 @@ export class PaystackService {
     }
 
     return data.data.account_name;
+  }
+
+  async createTransferRecipient(name: string, accountNumber: string, bankCode: string): Promise<string> {
+    const secretKey = this.config.get<string>('PAYSTACK_SECRET_KEY');
+
+    const response = await fetch(`${this.baseUrl}/transferrecipient`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type: 'nuban',
+        name,
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: 'NGN',
+      }),
+    });
+
+    const data = (await response.json()) as PaystackTransferRecipientResponse;
+
+    if (!data.status) {
+      throw new Error(data.message);
+    }
+
+    return data.data.recipient_code;
+  }
+
+  async initiateTransfer(recipientCode: string, amountKobo: number, reason: string): Promise<string> {
+    const secretKey = this.config.get<string>('PAYSTACK_SECRET_KEY');
+
+    const response = await fetch(`${this.baseUrl}/transfer`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        source: 'balance',
+        amount: amountKobo,
+        recipient: recipientCode,
+        reason,
+      }),
+    });
+
+    const data = (await response.json()) as PaystackTransferResponse;
+
+    if (!data.status) {
+      throw new Error(data.message);
+    }
+
+    return data.data.transfer_code;
   }
 }

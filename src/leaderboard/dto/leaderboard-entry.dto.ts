@@ -14,6 +14,9 @@ export class LeaderboardEntryDto {
   avatarUrl: string;
 
   @ApiProperty()
+  totalScore: number;
+
+  @ApiProperty()
   totalPrizeWon: string;
 
   @ApiProperty()

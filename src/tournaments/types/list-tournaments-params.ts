@@ -10,4 +10,5 @@ export interface ListTournamentsParams {
   arena?: TournamentArena;
   status?: TournamentStatus;
   gameType?: GameType;
+  userId?: string;
 }

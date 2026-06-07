@@ -39,9 +39,15 @@ export class TournamentListItemDto {
   isFunded: boolean;
 
   @ApiProperty()
+  entryCount: number;
+
+  @ApiProperty()
+  hasJoined: boolean;
+
+  @ApiProperty()
   createdAt: Date;
 
-  static fromEntity(t: Tournament): TournamentListItemDto {
+  static fromEntity(t: Tournament, entryCount = 0, hasJoined = false): TournamentListItemDto {
     const dto = new TournamentListItemDto();
 
     dto.id = t.id;
@@ -55,6 +61,8 @@ export class TournamentListItemDto {
     dto.status = t.status;
     dto.scheduledAt = t.scheduledAt;
     dto.isFunded = t.isFunded;
+    dto.entryCount = entryCount;
+    dto.hasJoined = hasJoined;
     dto.createdAt = t.createdAt;
 
     return dto;

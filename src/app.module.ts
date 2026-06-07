@@ -1,5 +1,7 @@
+import { APP_FILTER } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AuthModule } from './auth/auth.module';
@@ -10,8 +12,10 @@ import { QuestionsModule } from './questions/questions.module';
 import { GameSessionsModule } from './game-sessions/game-sessions.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { PaystackModule } from './services/paystack/paystack.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
+  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
@@ -38,6 +42,7 @@ import { PaystackModule } from './services/paystack/paystack.module';
     GameSessionsModule,
     LeaderboardModule,
     PaystackModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

@@ -4,13 +4,18 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Injectable,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 
+@Injectable()
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  constructor(private readonly config: ConfigService) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -31,6 +36,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
             'message' in exceptionResponse
           ? (exceptionResponse as { message: unknown }).message
           : exceptionResponse;
+
+    if (status >= 500) {
+      const isDev = this.config.get('NODE_ENV') !== 'production';
+
+      this.logger.error(
+        `${request.method} ${request.url}`,
+        isDev && exception instanceof Error ? exception.stack : String(exception),
+      );
+    }
 
     response.status(status).json({
       statusCode: status,

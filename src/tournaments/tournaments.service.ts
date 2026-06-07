@@ -9,6 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Tournament } from './entities/tournament.entity';
 import { TournamentEntry, EntryStatus } from './entities/tournament-entry.entity';
+import { GameSession } from '../game-sessions/entities/game-session.entity';
+import { SessionStatus } from '../game-sessions/types/session-status.enum';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 import { TournamentListItemDto } from './dto/tournament-list-item.dto';
@@ -29,6 +31,8 @@ export class TournamentsService {
     private readonly tournamentsRepo: Repository<Tournament>,
     @InjectRepository(TournamentEntry)
     private readonly entriesRepo: Repository<TournamentEntry>,
+    @InjectRepository(GameSession)
+    private readonly sessionsRepo: Repository<GameSession>,
     private readonly walletService: WalletService,
   ) {}
 
@@ -50,14 +54,39 @@ export class TournamentsService {
     return TournamentResponseDto.fromEntity(saved);
   }
 
-  async findOne(id: string): Promise<TournamentResponseDto> {
+  async findOne(id: string, userId?: string): Promise<TournamentResponseDto> {
     const tournament = await this.tournamentsRepo.findOne({ where: { id } });
 
     if (!tournament) {
       throw new NotFoundException('Tournament not found');
     }
 
-    return TournamentResponseDto.fromEntity(tournament);
+    const [entryCount, userEntry, userSession] = await Promise.all([
+      this.entriesRepo.count({ where: { tournamentId: id } }),
+      userId
+        ? this.entriesRepo.findOne({ where: { tournamentId: id, userId } })
+        : Promise.resolve(null),
+      userId
+        ? this.sessionsRepo.findOne({
+            where: { tournamentId: id, userId, status: SessionStatus.COMPLETED },
+            order: { startedAt: 'DESC' },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return TournamentResponseDto.fromEntity(tournament, {
+      entryCount,
+      hasJoined: userEntry !== null,
+      userEntry: userEntry
+        ? {
+            score: userEntry.score,
+            totalAnswered: userSession?.totalAnswered ?? 0,
+            status: userEntry.status,
+            rank: userEntry.rank ?? null,
+            prizeWon: userEntry.prizeWon ?? null,
+          }
+        : null,
+    });
   }
 
   async list(params: ListTournamentsParams): Promise<PaginatedResponseDto<TournamentListItemDto>> {
@@ -85,8 +114,38 @@ export class TournamentsService {
 
     const [tournaments, total] = await qb.getManyAndCount();
 
+    let countMap = new Map<string, number>();
+    let joinedIds = new Set<string>();
+
+    if (tournaments.length > 0) {
+      const ids = tournaments.map((t) => t.id);
+
+      const [counts, joined] = await Promise.all([
+        this.entriesRepo
+          .createQueryBuilder('e')
+          .select('e.tournamentId', 'tournamentId')
+          .addSelect('COUNT(e.id)::int', 'count')
+          .where('e.tournamentId IN (:...ids)', { ids })
+          .groupBy('e.tournamentId')
+          .getRawMany<{ tournamentId: string; count: string }>(),
+        params.userId
+          ? this.entriesRepo
+              .createQueryBuilder('e')
+              .select('e.tournamentId', 'tournamentId')
+              .where('e.tournamentId IN (:...ids)', { ids })
+              .andWhere('e.userId = :userId', { userId: params.userId })
+              .getRawMany<{ tournamentId: string }>()
+          : Promise.resolve([] as { tournamentId: string }[]),
+      ]);
+
+      countMap = new Map(counts.map((c) => [c.tournamentId, Number(c.count)]));
+      joinedIds = new Set(joined.map((r) => r.tournamentId));
+    }
+
     return new PaginatedResponseDto(
-      tournaments.map(TournamentListItemDto.fromEntity),
+      tournaments.map((t) =>
+        TournamentListItemDto.fromEntity(t, countMap.get(t.id) ?? 0, joinedIds.has(t.id)),
+      ),
       total,
       params.page,
       params.limit,
@@ -180,7 +239,7 @@ export class TournamentsService {
       .select([
         'e.userId       AS "userId"',
         'e.score        AS "score"',
-        'e.prize_won    AS "prizeWon"',
+        'e."prizeWon"   AS "prizeWon"',
         'u.username     AS "username"',
         'u.avatarUrl    AS "avatarUrl"',
       ])

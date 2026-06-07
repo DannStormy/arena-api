@@ -3,17 +3,19 @@ import {
   CreateDateColumn,
   Entity,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { QuestionCategory } from '../types/question-category.enum';
 import { QuestionDifficulty } from '../types/question-difficulty.enum';
 
 @Entity('questions')
+@Unique(['content', 'category'])
 export class Question {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ type: 'text' })
+  @Column({ type: 'citext' })
   content: string;
 
   @Column({ type: 'jsonb' })

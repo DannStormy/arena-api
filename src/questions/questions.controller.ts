@@ -42,8 +42,8 @@ export class QuestionsController {
   @Post()
   @ApiOperation({ summary: 'Bulk create questions (admin only)' })
   @ApiBody({ type: BulkCreateQuestionsDto })
-  @ApiResponse({ status: 201, schema: { example: { created: 5 } } })
-  async bulkCreate(@Body() dto: BulkCreateQuestionsDto): Promise<{ created: number }> {
+  @ApiResponse({ status: 201, schema: { example: { created: 5, skipped: 2 } } })
+  async bulkCreate(@Body() dto: BulkCreateQuestionsDto): Promise<{ created: number; skipped: number }> {
     return this.questionsService.bulkCreate(dto.questions);
   }
 

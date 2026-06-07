@@ -62,3 +62,30 @@ export interface PaystackBanksResponse {
   message: string;
   data: Array<{ name: string; code: string; [key: string]: unknown }>;
 }
+
+export interface PaystackTransferRecipientResponse {
+  status: boolean;
+  message: string;
+  data: {
+    recipient_code: string;
+    type: string;
+    name: string;
+    details: {
+      account_number: string;
+      account_name: string;
+      bank_code: string;
+      bank_name: string;
+    };
+  };
+}
+
+export interface PaystackTransferResponse {
+  status: boolean;
+  message: string;
+  data: {
+    transfer_code: string;
+    amount: number;
+    currency: string;
+    status: string;
+  };
+}

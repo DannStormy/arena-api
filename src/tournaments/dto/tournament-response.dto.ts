@@ -57,9 +57,31 @@ export class TournamentResponseDto {
   createdAt: Date;
 
   @ApiProperty()
+  entryCount: number;
+
+  @ApiProperty()
+  hasJoined: boolean;
+
+  @ApiProperty()
+  userEntry: {
+    score: number;
+    totalAnswered: number;
+    status: string;
+    rank: number | null;
+    prizeWon: string | null;
+  } | null;
+
+  @ApiProperty()
   updatedAt: Date;
 
-  static fromEntity(t: Tournament): TournamentResponseDto {
+  static fromEntity(
+    t: Tournament,
+    opts: {
+      entryCount?: number;
+      hasJoined?: boolean;
+      userEntry?: TournamentResponseDto['userEntry'];
+    } = {},
+  ): TournamentResponseDto {
     const dto = new TournamentResponseDto();
 
     dto.id = t.id;
@@ -78,6 +100,9 @@ export class TournamentResponseDto {
     dto.completedAt = t.completedAt;
     dto.isFunded = t.isFunded;
     dto.createdBy = t.createdBy;
+    dto.entryCount = opts.entryCount ?? 0;
+    dto.hasJoined = opts.hasJoined ?? false;
+    dto.userEntry = opts.userEntry ?? null;
     dto.createdAt = t.createdAt;
     dto.updatedAt = t.updatedAt;
 
