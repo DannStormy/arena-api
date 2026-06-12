@@ -1,10 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Question } from './entities/question.entity';
 import { UserQuestionHistory } from './entities/user-question-history.entity';
+import { QuestionReport } from './entities/question-report.entity';
 import { QuestionCategory } from './types/question-category.enum';
 import { QuestionDifficulty } from './types/question-difficulty.enum';
+import { ReportReason } from './types/report-reason.enum';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { QuestionListItemDto } from './dto/question-list-item.dto';
 import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
@@ -21,6 +23,8 @@ export class QuestionsService {
     private readonly questionsRepo: Repository<Question>,
     @InjectRepository(UserQuestionHistory)
     private readonly historyRepo: Repository<UserQuestionHistory>,
+    @InjectRepository(QuestionReport)
+    private readonly reportRepo: Repository<QuestionReport>,
   ) {}
 
   async bulkCreate(questions: CreateQuestionDto[]): Promise<{ created: number; skipped: number }> {
@@ -128,6 +132,66 @@ export class QuestionsService {
     );
 
     return questions;
+  }
+
+  async reportQuestion(
+    questionId: string,
+    userId: string,
+    reason: ReportReason,
+  ): Promise<{ success: true }> {
+    const exists = await this.questionsRepo.exists({ where: { id: questionId } });
+
+    if (!exists) {
+      throw new NotFoundException('Question not found');
+    }
+
+    await this.reportRepo.upsert(
+      { questionId, userId, reason },
+      { conflictPaths: ['questionId', 'userId'] },
+    );
+
+    return { success: true };
+  }
+
+  async listReportedQuestions(query: PaginatedQueryDto): Promise<
+    PaginatedResponseDto<{
+      questionId: string;
+      content: string;
+      category: string;
+      reportCount: number;
+      reasons: ReportReason[];
+    }>
+  > {
+    const baseQb = this.reportRepo
+      .createQueryBuilder('r')
+      .innerJoin('r.question', 'q')
+      .select('q.id', 'questionId')
+      .addSelect('q.content', 'content')
+      .addSelect('q.category', 'category')
+      .addSelect('COUNT(r.id)::int', 'reportCount')
+      .addSelect('ARRAY_AGG(DISTINCT r.reason)', 'reasons')
+      .groupBy('q.id');
+
+    const countResult = await this.reportRepo
+      .createQueryBuilder('r')
+      .select('COUNT(DISTINCT r."questionId")::int', 'total')
+      .getRawOne<{ total: string }>();
+
+    const total = Number(countResult?.total ?? 0);
+
+    const rows = await baseQb
+      .orderBy('"reportCount"', 'DESC')
+      .offset((query.page - 1) * query.limit)
+      .limit(query.limit)
+      .getRawMany<{
+        questionId: string;
+        content: string;
+        category: string;
+        reportCount: number;
+        reasons: ReportReason[];
+      }>();
+
+    return new PaginatedResponseDto(rows, total, query.page, query.limit);
   }
 
   async upsertHistory(

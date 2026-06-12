@@ -12,6 +12,8 @@ import { AdminController } from './admin.controller';
 import { PaystackModule } from '../services/paystack/paystack.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
+import { DuelsModule } from '../duels/duels.module';
+import { QuestionsModule } from '../questions/questions.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { TournamentsModule } from '../tournaments/tournaments.module';
     PaystackModule,
     WalletModule,
     TournamentsModule,
+    DuelsModule,
+    QuestionsModule,
   ],
   providers: [AdminService],
   controllers: [AdminController],

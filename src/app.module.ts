@@ -13,6 +13,7 @@ import { GameSessionsModule } from './game-sessions/game-sessions.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { PaystackModule } from './services/paystack/paystack.module';
 import { AdminModule } from './admin/admin.module';
+import { DuelsModule } from './duels/duels.module';
 
 @Module({
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
@@ -43,6 +44,7 @@ import { AdminModule } from './admin/admin.module';
     LeaderboardModule,
     PaystackModule,
     AdminModule,
+    DuelsModule,
   ],
 })
 export class AppModule {}

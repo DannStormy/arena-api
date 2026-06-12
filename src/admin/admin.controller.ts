@@ -20,8 +20,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
+import { QuestionsService } from '../questions/questions.service';
 import { TournamentsService } from '../tournaments/tournaments.service';
+import { DuelsService } from '../duels/duels.service';
+import { DuelConfigService } from '../duels/duel-config.service';
 import { UpdateTournamentStatusDto } from '../tournaments/dto/update-tournament-status.dto';
+import { UpdateDuelConfigDto } from '../duels/dto/update-duel-config.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -40,7 +44,10 @@ import { TriggerPayoutDto } from './dto/trigger-payout.dto';
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
+    private readonly questionsService: QuestionsService,
     private readonly tournamentsService: TournamentsService,
+    private readonly duelsService: DuelsService,
+    private readonly duelConfigService: DuelConfigService,
   ) {}
 
   @Get('stats')
@@ -60,6 +67,14 @@ export class AdminController {
   @ApiResponse({ status: 200 })
   listQuestions(@Query() query: AdminQuestionsQueryDto) {
     return this.adminService.listQuestions(query);
+  }
+
+  // NOTE: declared before questions/:id to avoid route shadowing
+  @Get('questions/reports')
+  @ApiOperation({ summary: 'List reported questions ordered by report count (admin)' })
+  @ApiResponse({ status: 200 })
+  listReportedQuestions(@Query() query: PaginatedQueryDto) {
+    return this.questionsService.listReportedQuestions(query);
   }
 
   @Patch('questions/:id')
@@ -156,5 +171,28 @@ export class AdminController {
   })
   triggerPayout(@Body() dto: TriggerPayoutDto) {
     return this.adminService.triggerPayout(dto);
+  }
+
+  @Get('duels')
+  @ApiOperation({ summary: 'List all duels (admin)' })
+  @ApiResponse({ status: 200 })
+  listDuels(@Query() query: PaginatedQueryDto) {
+    return this.duelsService.listAllDuels(query);
+  }
+
+  @Get('duels/config')
+  @ApiOperation({ summary: 'Get duel platform config (admin)' })
+  @ApiResponse({ status: 200 })
+  getDuelConfig() {
+    return this.duelConfigService.getConfig();
+  }
+
+  @Patch('duels/config')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update duel platform config (admin)' })
+  @ApiBody({ type: UpdateDuelConfigDto })
+  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  updateDuelConfig(@Body() dto: UpdateDuelConfigDto) {
+    return this.duelConfigService.updateConfig(dto);
   }
 }
