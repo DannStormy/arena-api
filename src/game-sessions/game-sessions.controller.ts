@@ -53,14 +53,14 @@ export class GameSessionsController {
   }
 
   @Get(':id/questions')
-  @ApiOperation({ summary: 'Get the current question for the session' })
+  @ApiOperation({ summary: 'Get the current question, or { sessionComplete: true } when the session is done' })
   @ApiResponse({ status: 200, type: QuestionResponseDto })
-  @ApiResponse({ status: 400, description: 'No more questions or session not active' })
   async getCurrentQuestion(
     @CurrentUser() user: JwtPayload,
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<QuestionResponseDto> {
-    return this.gameSessionsService.getNextQuestion(id, user.sub);
+  ): Promise<QuestionResponseDto | { sessionComplete: true }> {
+    const question = await this.gameSessionsService.getCurrentQuestion(id, user.sub);
+    return question ?? { sessionComplete: true };
   }
 
   @Get(':id/next-question')

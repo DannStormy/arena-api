@@ -1,5 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { SessionStatus } from '../types/session-status.enum';
+import { ProgressionSnapshot } from '../../duels/duel-progression';
 
 export class SessionResultDto {
   @ApiProperty()
@@ -28,4 +29,7 @@ export class SessionResultDto {
 
   @ApiProperty()
   completedAt: Date;
+
+  @ApiPropertyOptional()
+  myProgression: ProgressionSnapshot | null;
 }

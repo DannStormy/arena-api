@@ -11,7 +11,6 @@ import { GameAnswer } from './entities/game-answer.entity';
 import { SessionStatus } from './types/session-status.enum';
 import { QuestionsService } from '../questions/questions.service';
 import { TournamentsService } from '../tournaments/tournaments.service';
-import { TournamentResponseDto } from '../tournaments/dto/tournament-response.dto';
 import { QuestionResponseDto } from '../questions/dto/question-response.dto';
 import { StartSessionResponseDto } from './dto/start-session-response.dto';
 import { SubmitAnswerDto } from './dto/submit-answer.dto';
@@ -19,6 +18,17 @@ import { SubmitAnswerResponseDto } from './dto/submit-answer-response.dto';
 import { SessionResultDto } from './dto/session-result.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { QuestionCategory } from '../questions/types/question-category.enum';
+import { User } from '../users/entities/user.entity';
+import { Duel } from '../duels/entities/duel.entity';
+import { DuelStatus } from '../duels/types/duel-status.enum';
+import {
+  levelFromXp,
+  currentSeasonId,
+  FIRST_DUEL_DAY_XP,
+  tournamentAwardXp,
+  ProgressionSnapshot,
+} from '../duels/duel-progression';
+import { rankFromSeasonPoints } from '../common/rank-tiers';
 
 const QUESTIONS_PER_SESSION = 10;
 const FLAG_AVG_MS_THRESHOLD = 2000;
@@ -34,6 +44,10 @@ export class GameSessionsService {
     private readonly sessionsRepo: Repository<GameSession>,
     @InjectRepository(GameAnswer)
     private readonly answersRepo: Repository<GameAnswer>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    @InjectRepository(Duel)
+    private readonly duelsRepo: Repository<Duel>,
     private readonly questionsService: QuestionsService,
     private readonly tournamentsService: TournamentsService,
   ) {}
@@ -61,6 +75,7 @@ export class GameSessionsService {
       userId,
       gameType: tournament.gameType,
       questionIds: questions.map((q) => q.id),
+      status: SessionStatus.ACTIVE,
     });
 
     const saved = await this.sessionsRepo.save(session);
@@ -77,6 +92,29 @@ export class GameSessionsService {
     dto.startedAt = saved.startedAt;
 
     return dto;
+  }
+
+  /**
+   * Returns the current question, or null if the session is no longer active.
+   * Never throws a 400 — callers should treat null as "session is done, show results".
+   */
+  async getCurrentQuestion(sessionId: string, userId: string): Promise<QuestionResponseDto | null> {
+    const session = await this.sessionsRepo.findOne({
+      where: { id: sessionId, userId },
+    });
+
+    if (!session) throw new NotFoundException('Session not found');
+
+    if (session.status !== SessionStatus.ACTIVE) return null;
+
+    if (session.currentIndex >= session.questionIds.length) return null;
+
+    const questionId = session.questionIds[session.currentIndex];
+    const question = await this.questionsService.findById(questionId);
+
+    if (!question) throw new NotFoundException('Question not found');
+
+    return QuestionResponseDto.fromEntity(question);
   }
 
   async getNextQuestion(sessionId: string, userId: string): Promise<QuestionResponseDto> {
@@ -205,20 +243,34 @@ export class GameSessionsService {
     response.completed = false;
 
     if (newTotal === session.questionIds.length) {
-      await this.completeSession(sessionId, userId);
+      // Reflect updated state so completeSession sees correct counts
+      session.score = newScore;
+      session.correctAnswers = newCorrect;
+      session.totalAnswered = newTotal;
+      session.isFlagged = isFlagged;
+
+      const result = await this.completeSession(sessionId, userId, session);
 
       response.completed = true;
       response.finalScore = newScore;
+      response.myProgression = result.myProgression;
     }
 
     return response;
   }
 
-  async completeSession(sessionId: string, userId: string): Promise<SessionResultDto> {
-    const session = await this.sessionsRepo
-      .createQueryBuilder('s')
-      .where('s.id = :sessionId AND s.userId = :userId', { sessionId, userId })
-      .getOne();
+  async completeSession(
+    sessionId: string,
+    userId: string,
+    // Pass pre-fetched session to avoid an extra DB round-trip from submitAnswer
+    existingSession?: GameSession,
+  ): Promise<SessionResultDto> {
+    const session =
+      existingSession ??
+      (await this.sessionsRepo
+        .createQueryBuilder('s')
+        .where('s.id = :sessionId AND s.userId = :userId', { sessionId, userId })
+        .getOne());
 
     if (!session) {
       throw new NotFoundException('Session not found');
@@ -229,9 +281,10 @@ export class GameSessionsService {
     }
 
     const completedAt = new Date();
+    const finalStatus = session.isFlagged ? SessionStatus.FLAGGED : SessionStatus.COMPLETED;
 
     await this.sessionsRepo.update(sessionId, {
-      status: session.isFlagged ? SessionStatus.FLAGGED : SessionStatus.COMPLETED,
+      status: finalStatus,
       completedAt,
     });
 
@@ -251,6 +304,9 @@ export class GameSessionsService {
       );
     }
 
+    // Award XP and build progression snapshot (idempotent, honours flagged-session hold)
+    const snapshot = await this.awardTournamentProgression(session);
+
     this.logger.log(
       `Session completed: ${sessionId} score=${session.score} flagged=${session.isFlagged}`,
     );
@@ -261,11 +317,110 @@ export class GameSessionsService {
     dto.score = session.score;
     dto.correctAnswers = session.correctAnswers;
     dto.totalAnswered = session.totalAnswered;
-    dto.status = session.isFlagged ? SessionStatus.FLAGGED : SessionStatus.COMPLETED;
+    dto.status = finalStatus;
     dto.isFlagged = session.isFlagged;
     dto.startedAt = session.startedAt;
     dto.completedAt = completedAt;
+    dto.myProgression = snapshot;
 
     return dto;
   }
+
+  // ── Private helpers ─────────────────────────────────────────────────────────
+
+  private async awardTournamentProgression(session: GameSession): Promise<ProgressionSnapshot | null> {
+    // Idempotency guard
+    if (session.progressionAwarded) {
+      return session.sessionProgression;
+    }
+    // Flagged-session hold: same pattern as duels
+    if (session.isFlagged) {
+      return null;
+    }
+
+    const user = await this.usersRepo.findOne({ where: { id: session.userId } });
+    if (!user) return null;
+
+    const isFirst = await this.isFirstGameOfDay(session.userId, session.id);
+    const firstGameBonus = isFirst ? FIRST_DUEL_DAY_XP : 0;
+
+    const xpAwarded = tournamentAwardXp({
+      correctAnswers: session.correctAnswers,
+      totalAnswered: session.totalAnswered,
+      firstGameOfDayBonus: firstGameBonus,
+    });
+
+    const seasonId = currentSeasonId();
+    const xpBefore = Number(user.lifetimeXp);
+    const spBefore = user.seasonId === seasonId ? user.seasonPoints : 0;
+
+    // Update user XP — no SP for tournaments
+    await this.usersRepo.update(user.id, {
+      lifetimeXp: xpBefore + xpAwarded,
+    });
+
+    // Build snapshot — SP fields stay at spBefore (tournaments don't move rank)
+    const xpAfter = xpBefore + xpAwarded;
+    const { level: levelBefore, intoLevel: intoLevelBefore } = levelFromXp(xpBefore);
+    const { level: levelAfter, intoLevel: intoLevelAfter, nextLevelAt } = levelFromXp(xpAfter);
+    const { rank: rankBefore, rankFloor, nextRankAt } = rankFromSeasonPoints(spBefore);
+
+    const snapshot: ProgressionSnapshot = {
+      xpBefore,
+      xpAfter,
+      xpAwarded,
+      levelBefore,
+      levelAfter,
+      intoLevelBefore,
+      intoLevelAfter,
+      nextLevelAt,
+      spBefore,
+      spAfter: spBefore, // no change
+      spAwarded: 0,
+      rankBefore,
+      rankAfter: rankBefore, // no change
+      rankFloor,
+      nextRankAt,
+      firstGameOfDayBonus: firstGameBonus,
+    };
+
+    await this.sessionsRepo.update(session.id, {
+      progressionAwarded: true,
+      sessionProgression: snapshot,
+    });
+
+    this.logger.log(
+      `Tournament progression awarded: session=${session.id} user=${session.userId} +${xpAwarded}XP`,
+    );
+
+    return snapshot;
+  }
+
+  private async isFirstGameOfDay(userId: string, sessionId: string): Promise<boolean> {
+    const todayStart = startOfUtcDay();
+
+    const [priorSessions, priorDuels] = await Promise.all([
+      this.sessionsRepo
+        .createQueryBuilder('s')
+        .where('s.userId = :uid', { uid: userId })
+        .andWhere("s.status IN ('completed', 'flagged')")
+        .andWhere('s.startedAt >= :start', { start: todayStart })
+        .andWhere('s.id != :sid', { sid: sessionId })
+        .getCount(),
+
+      this.duelsRepo
+        .createQueryBuilder('d')
+        .where('(d.challengerId = :uid OR d.opponentId = :uid)', { uid: userId })
+        .andWhere("d.status = 'completed'")
+        .andWhere('d.completedAt >= :start', { start: todayStart })
+        .getCount(),
+    ]);
+
+    return priorSessions === 0 && priorDuels === 0;
+  }
+}
+
+function startOfUtcDay(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }

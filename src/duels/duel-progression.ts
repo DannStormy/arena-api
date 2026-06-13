@@ -19,7 +19,7 @@ export interface ProgressionSnapshot {
   nextRankAt: number | null;
   xpAwarded: number;
   spAwarded: number;
-  firstDuelOfDayBonus: number; // 0 or 50
+  firstGameOfDayBonus: number; // 0 or 50
 }
 
 export interface DuelAward {
@@ -122,4 +122,25 @@ export function currentSeasonId(): string {
   const y = now.getUTCFullYear();
   const m = String(now.getUTCMonth() + 1).padStart(2, '0');
   return `${y}-${m}`;
+}
+
+// ─── Tournament XP ───────────────────────────────────────────────────────────
+// Proposed defaults — change here only; not spread across callers.
+
+export const TOURNAMENT_XP = {
+  completion: 20,
+  perCorrect: 5,
+  accuracyBonus: 30,
+  accuracyThreshold: 0.8,
+} as const;
+
+export function tournamentAwardXp(p: {
+  correctAnswers: number;
+  totalAnswered: number;
+  firstGameOfDayBonus: number;
+}): number {
+  const accuracy = p.totalAnswered > 0 ? p.correctAnswers / p.totalAnswered : 0;
+  let xp = TOURNAMENT_XP.completion + p.correctAnswers * TOURNAMENT_XP.perCorrect;
+  if (accuracy >= TOURNAMENT_XP.accuracyThreshold) xp += TOURNAMENT_XP.accuracyBonus;
+  return xp + p.firstGameOfDayBonus;
 }

@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ProgressionSnapshot } from '../../duels/duel-progression';
 
 export class SubmitAnswerResponseDto {
   @ApiProperty()
@@ -21,4 +22,7 @@ export class SubmitAnswerResponseDto {
 
   @ApiPropertyOptional({ description: 'Final score — only present when completed is true' })
   finalScore?: number;
+
+  @ApiPropertyOptional({ description: 'Progression snapshot — only present when completed is true' })
+  myProgression?: ProgressionSnapshot | null;
 }

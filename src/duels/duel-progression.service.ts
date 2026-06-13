@@ -133,7 +133,7 @@ export class DuelProgressionService {
     xpAwarded: number,
     spBefore: number,
     spAwarded: number,
-    firstDuelOfDayBonus: number,
+    firstGameOfDayBonus: number,
   ): ProgressionSnapshot {
     const xpAfter = xpBefore + xpAwarded;
     const spAfter = spBefore + spAwarded;
@@ -156,7 +156,7 @@ export class DuelProgressionService {
       spBefore, spAfter, spAwarded,
       rankBefore, rankAfter,
       rankFloor, nextRankAt,
-      firstDuelOfDayBonus,
+      firstGameOfDayBonus,
     };
   }
 

@@ -8,6 +8,7 @@ import {
 import { Tournament } from '../../tournaments/entities/tournament.entity';
 import { GameType } from '../types/game-type.enum';
 import { SessionStatus } from '../types/session-status.enum';
+import { ProgressionSnapshot } from '../../duels/duel-progression';
 
 @Entity('game_sessions')
 export class GameSession {
@@ -49,6 +50,12 @@ export class GameSession {
 
   @Column({ nullable: true })
   flagReason: string;
+
+  @Column({ type: 'boolean', default: false })
+  progressionAwarded: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  sessionProgression: ProgressionSnapshot | null;
 
   @CreateDateColumn()
   startedAt: Date;
