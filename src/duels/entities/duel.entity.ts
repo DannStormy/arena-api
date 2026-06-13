@@ -62,6 +62,12 @@ export class Duel {
   @Column({ type: 'varchar', nullable: true })
   winnerId: string | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  resolution: 'score' | 'speed_tiebreak' | 'sudden_death' | 'forfeit' | 'draw' | null;
+
+  @Column({ type: 'int', nullable: true })
+  tiebreakDeltaMs: number | null;
+
   @Column({ default: false })
   isTie: boolean;
 

@@ -57,6 +57,12 @@ export class DuelResponseDto {
   @ApiPropertyOptional()
   winnerId: string | null;
 
+  @ApiPropertyOptional()
+  resolution: 'score' | 'speed_tiebreak' | 'sudden_death' | 'forfeit' | 'draw' | null;
+
+  @ApiPropertyOptional()
+  tiebreakDeltaMs: number | null;
+
   @ApiProperty()
   isTie: boolean;
 
@@ -126,6 +132,8 @@ export class DuelResponseDto {
     dto.challengerMaxStreak = duel.challengerMaxStreak;
     dto.opponentMaxStreak = duel.opponentMaxStreak;
     dto.winnerId = duel.winnerId;
+    dto.resolution = duel.resolution;
+    dto.tiebreakDeltaMs = duel.tiebreakDeltaMs;
     dto.isTie = duel.isTie;
     dto.suddenDeathRound = duel.suddenDeathRound;
     dto.expiresAt = duel.expiresAt;

@@ -23,6 +23,7 @@ import { QuestionResponseDto } from '../questions/dto/question-response.dto';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/types/transaction-type.enum';
 import { DuelConfigService } from './duel-config.service';
+import { resolveDuel } from './duel-resolver';
 import { TournamentEntry } from '../tournaments/entities/tournament-entry.entity';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { QuestionCategory } from '../questions/types/question-category.enum';
@@ -526,6 +527,8 @@ export class DuelsService {
 
     duel.status = DuelStatus.CANCELLED;
     duel.winnerId = winnerId;
+    duel.resolution = 'forfeit';
+    duel.tiebreakDeltaMs = 0;
     duel.completedAt = new Date();
 
     await this.duelsRepo.save(duel);
@@ -534,8 +537,9 @@ export class DuelsService {
 
     if (stake > 0) {
       const winnerWallet = await this.walletService.findByUserId(winnerId);
+      const prize = stake * 2 * 0.75;
 
-      await this.walletService.credit(winnerWallet.id, stake * 2, TransactionType.PRIZE_PAYOUT, {
+      await this.walletService.credit(winnerWallet.id, prize, TransactionType.PRIZE_PAYOUT, {
         description: `Forfeit winnings: duel ${duelId}`,
         extra: { duelId, reason: 'forfeit' },
       });
@@ -782,29 +786,50 @@ export class DuelsService {
         };
       }
 
-      // One correct, one wrong — eliminate the wrong answer's player
+      // One correct, one wrong — eliminate the wrong answer's player via SD resolution.
+      // Both correct — advance to next question or resolve via speed tiebreak on last.
       const loserAnswer = await this.answersRepo.findOne({
         where: { duelId: freshDuel.id, questionId, isCorrect: false, isSteal: false },
       });
 
       if (loserAnswer) {
-        const winnerId =
-          loserAnswer.userId === freshDuel.challengerId
-            ? freshDuel.opponentId
-            : freshDuel.challengerId;
+        await this.finalizeWithResolver(freshDuel, { suddenDeathLoserId: loserAnswer.userId });
 
-        if (winnerId) {
-          freshDuel.winnerId = winnerId;
-          freshDuel.status = DuelStatus.COMPLETED;
-          freshDuel.completedAt = new Date();
-
-          await this.duelsRepo.save(freshDuel);
-          await this.handleCompletionPrize(freshDuel);
-
-          const stats = await this.buildCompletionStats(freshDuel);
-          this.eventEmitter.emit('duel.completed', { duel: freshDuel, ...stats });
-        }
+        return {
+          isCorrect,
+          scoreAdded,
+          updatedDuel: freshDuel,
+          bothAnswered: true,
+          nextQuestionReady: false,
+          duelComplete: true,
+          stealOpportunity: false,
+          stealResult: null,
+          suddenDeathStarted: false,
+        };
       }
+
+      // Both correct — advance to the next question or finalize with speed tiebreak
+      const isLastSdQuestion =
+        freshDuel.currentQuestionIndex + 1 >= freshDuel.questionIds.length;
+
+      if (!isLastSdQuestion) {
+        freshDuel.currentQuestionIndex += 1;
+        await this.duelsRepo.save(freshDuel);
+
+        return {
+          isCorrect,
+          scoreAdded,
+          updatedDuel: freshDuel,
+          bothAnswered: true,
+          nextQuestionReady: true,
+          duelComplete: false,
+          stealOpportunity: false,
+          stealResult: null,
+          suddenDeathStarted: false,
+        };
+      }
+
+      const sdResult = await this.completeDuelLogic(freshDuel);
 
       return {
         isCorrect,
@@ -812,10 +837,10 @@ export class DuelsService {
         updatedDuel: freshDuel,
         bothAnswered: true,
         nextQuestionReady: false,
-        duelComplete: true,
+        duelComplete: sdResult.duelComplete,
         stealOpportunity: false,
         stealResult: null,
-        suddenDeathStarted: false,
+        suddenDeathStarted: sdResult.suddenDeathStarted,
       };
     }
     // ── End Sudden Death ────────────────────────────────────────────────────────
@@ -911,50 +936,65 @@ export class DuelsService {
     return { questionSummary, challengerCorrect, opponentCorrect };
   }
 
+  private async finalizeWithResolver(
+    duel: Duel,
+    opts: { suddenDeathLoserId?: string | null } = {},
+  ): Promise<{ duelComplete: boolean; suddenDeathStarted: boolean }> {
+    const allAnswers = await this.answersRepo.find({
+      where: { duelId: duel.id, isSteal: false },
+    });
+
+    const resolved = resolveDuel({
+      challengerId: duel.challengerId,
+      opponentId: duel.opponentId!,
+      challengerScore: duel.challengerScore,
+      opponentScore: duel.opponentScore,
+      answers: allAnswers,
+      suddenDeathLoserId: opts.suddenDeathLoserId ?? null,
+    });
+
+    duel.winnerId = resolved.winnerId;
+    duel.resolution = resolved.resolution;
+    duel.tiebreakDeltaMs = resolved.tiebreakDeltaMs;
+    if (resolved.resolution === 'draw') duel.isTie = true;
+
+    duel.status = DuelStatus.COMPLETED;
+    duel.completedAt = new Date();
+
+    await this.duelsRepo.save(duel);
+    await this.handleCompletionPrize(duel);
+
+    const stats = await this.buildCompletionStats(duel);
+    this.eventEmitter.emit('duel.completed', { duel, ...stats });
+
+    return { duelComplete: true, suddenDeathStarted: false };
+  }
+
   private async completeDuelLogic(
     duel: Duel,
   ): Promise<{ duelComplete: boolean; suddenDeathStarted: boolean }> {
-    // TRIVIA: handle ties with sudden death
+    // TRIVIA / SD-status: handle ties with sudden death rounds
     if (
       (duel.mode === DuelMode.TRIVIA || duel.status === DuelStatus.SUDDEN_DEATH) &&
       duel.challengerScore === duel.opponentScore
     ) {
-      // In sudden death, if both answered correctly the scores are still tied.
-      // Resolve immediately by speed rather than spawning another round.
+      // In a sudden death round with both players correct, resolve via speed tiebreak
+      // rather than spawning another round.
       if (duel.status === DuelStatus.SUDDEN_DEATH) {
         const sdQuestionId = duel.questionIds[duel.currentQuestionIndex];
         const sdAnswers = await this.answersRepo.find({
           where: { duelId: duel.id, questionId: sdQuestionId, isSteal: false },
         });
 
-        const cAnswer = sdAnswers.find(
-          (a) => a.userId === duel.challengerId && a.questionId === sdQuestionId && a.isCorrect,
-        );
-        const oAnswer = sdAnswers.find(
-          (a) => a.userId === duel.opponentId && a.questionId === sdQuestionId && a.isCorrect,
-        );
+        const cCorrect = sdAnswers.some((a) => a.userId === duel.challengerId && a.isCorrect);
+        const oCorrect = sdAnswers.some((a) => a.userId === duel.opponentId && a.isCorrect);
 
-        if (cAnswer && oAnswer) {
-          // Both answered correctly in sudden death — fastest wins
-          duel.winnerId =
-            (cAnswer.timeTakenMs ?? Infinity) <= (oAnswer.timeTakenMs ?? Infinity)
-              ? duel.challengerId
-              : duel.opponentId;
-
-          duel.status = DuelStatus.COMPLETED;
-          duel.completedAt = new Date();
-
-          await this.duelsRepo.save(duel);
-          await this.handleCompletionPrize(duel);
-
-          const speedStats = await this.buildCompletionStats(duel);
-          this.eventEmitter.emit('duel.completed', { duel, ...speedStats });
-
-          return { duelComplete: true, suddenDeathStarted: false };
+        if (cCorrect && oCorrect) {
+          return this.finalizeWithResolver(duel);
         }
       }
 
-      // Attempt to fetch one more question
+      // Attempt to fetch one more question for a new SD round
       const questions = await this.questionsService.selectQuestionsForSession(
         duel.challengerId,
         this.arenaToCategory(duel.arena),
@@ -962,22 +1002,11 @@ export class DuelsService {
       );
 
       if (questions.length === 0) {
-        // Pool exhausted — declare tie
-        duel.isTie = true;
-        duel.status = DuelStatus.COMPLETED;
-        duel.completedAt = new Date();
-
-        await this.duelsRepo.save(duel);
-
-        await this.handleCompletionPrize(duel);
-
-        const tieStats = await this.buildCompletionStats(duel);
-        this.eventEmitter.emit('duel.completed', { duel, ...tieStats });
-
-        return { duelComplete: true, suddenDeathStarted: false };
+        // Pool exhausted — resolver decides (speed tiebreak or draw)
+        return this.finalizeWithResolver(duel);
       }
 
-      // Append sudden death question
+      // Append sudden death question and continue
       duel.questionIds = [...duel.questionIds, questions[0].id];
       duel.currentQuestionIndex = duel.questionIds.length - 1;
       duel.suddenDeathRound += 1;
@@ -988,26 +1017,8 @@ export class DuelsService {
       return { duelComplete: false, suddenDeathStarted: true };
     }
 
-    // Determine winner
-    if (duel.challengerScore > duel.opponentScore) {
-      duel.winnerId = duel.challengerId;
-    } else if (duel.opponentScore > duel.challengerScore) {
-      duel.winnerId = duel.opponentId;
-    } else {
-      duel.isTie = true;
-    }
-
-    duel.status = DuelStatus.COMPLETED;
-    duel.completedAt = new Date();
-
-    await this.duelsRepo.save(duel);
-
-    await this.handleCompletionPrize(duel);
-
-    const completionStats = await this.buildCompletionStats(duel);
-    this.eventEmitter.emit('duel.completed', { duel, ...completionStats });
-
-    return { duelComplete: true, suddenDeathStarted: false };
+    // All other cases: unified resolver handles score, speed tiebreak, or draw
+    return this.finalizeWithResolver(duel);
   }
 
   private async handleCompletionPrize(duel: Duel): Promise<void> {
@@ -1015,8 +1026,9 @@ export class DuelsService {
 
     if (stake <= 0) return;
 
-    if (duel.isTie) {
-      // Refund each player their stake
+    const isDraw = duel.resolution === 'draw' || (duel.resolution === null && duel.isTie);
+
+    if (isDraw) {
       const [cWallet, oWallet] = await Promise.all([
         this.walletService.findByUserId(duel.challengerId),
         this.walletService.findByUserId(duel.opponentId!),
@@ -1024,11 +1036,11 @@ export class DuelsService {
 
       await Promise.all([
         this.walletService.credit(cWallet.id, stake, TransactionType.REFUND, {
-          description: `Duel tie refund: ${duel.id}`,
+          description: `Duel draw refund: ${duel.id}`,
           extra: { duelId: duel.id },
         }),
         this.walletService.credit(oWallet.id, stake, TransactionType.REFUND, {
-          description: `Duel tie refund: ${duel.id}`,
+          description: `Duel draw refund: ${duel.id}`,
           extra: { duelId: duel.id },
         }),
       ]);
