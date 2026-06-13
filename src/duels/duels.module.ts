@@ -9,6 +9,7 @@ import { TournamentEntry } from '../tournaments/entities/tournament-entry.entity
 import { User } from '../users/entities/user.entity';
 import { DuelsService } from './duels.service';
 import { DuelConfigService } from './duel-config.service';
+import { DuelProgressionService } from './duel-progression.service';
 import { DuelsGateway } from './duels.gateway';
 import { DuelsController } from './duels.controller';
 import { QuestionsModule } from '../questions/questions.module';
@@ -27,7 +28,7 @@ import { WalletModule } from '../wallet/wallet.module';
       }),
     }),
   ],
-  providers: [DuelsService, DuelConfigService, DuelsGateway],
+  providers: [DuelsService, DuelConfigService, DuelProgressionService, DuelsGateway],
   controllers: [DuelsController],
   exports: [DuelsService, DuelConfigService],
 })

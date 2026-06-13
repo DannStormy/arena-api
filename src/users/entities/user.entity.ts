@@ -50,6 +50,22 @@ export class User {
   @Column({ default: false })
   isAdmin: boolean;
 
+  @Column({
+    type: 'bigint',
+    default: 0,
+    transformer: { to: (v: number) => v, from: (v: string | number) => Number(v) },
+  })
+  lifetimeXp: number;
+
+  @Column({ type: 'int', default: 0 })
+  seasonPoints: number;
+
+  @Column({ type: 'varchar', nullable: true })
+  seasonId: string | null;
+
+  @Column({ type: 'int', default: 0 })
+  duelWinStreak: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

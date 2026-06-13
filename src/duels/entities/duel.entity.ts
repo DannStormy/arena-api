@@ -68,7 +68,25 @@ export class Duel {
   @Column({ type: 'int', nullable: true })
   tiebreakDeltaMs: number | null;
 
-  @Column({ default: false })
+  @Column({ type: 'boolean', default: false })
+  isFlagged: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  progressionAwarded: boolean;
+
+  @Column({ type: 'int', nullable: true })
+  challengerXpAwarded: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  challengerSpAwarded: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  opponentXpAwarded: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  opponentSpAwarded: number | null;
+
+  @Column({ type: 'boolean', default: false })
   isTie: boolean;
 
   @Column({ default: 0 })

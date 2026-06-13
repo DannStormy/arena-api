@@ -24,6 +24,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/types/transaction-type.enum';
 import { DuelConfigService } from './duel-config.service';
 import { resolveDuel } from './duel-resolver';
+import { DuelProgressionService } from './duel-progression.service';
 import { TournamentEntry } from '../tournaments/entities/tournament-entry.entity';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { QuestionCategory } from '../questions/types/question-category.enum';
@@ -72,6 +73,7 @@ export class DuelsService {
     private readonly duelConfigService: DuelConfigService,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly progressionService: DuelProgressionService,
   ) {}
 
   // ─── Private helpers ────────────────────────────────────────────────────────
@@ -478,6 +480,34 @@ export class DuelsService {
     }
   }
 
+  async flagDuel(duelId: string): Promise<void> {
+    const duel = await this.duelsRepo.findOne({ where: { id: duelId } });
+
+    if (!duel) {
+      throw new NotFoundException('Duel not found');
+    }
+
+    duel.isFlagged = true;
+    await this.duelsRepo.save(duel);
+
+    this.logger.log(`Duel flagged for review: ${duelId}`);
+  }
+
+  async releaseFlaggedDuel(duelId: string): Promise<void> {
+    const duel = await this.duelsRepo.findOne({ where: { id: duelId } });
+
+    if (!duel || !duel.isFlagged) return;
+
+    duel.isFlagged = false;
+    await this.duelsRepo.save(duel);
+
+    // Release both wallet payout and progression that were held on flagging
+    await this.handleCompletionPrize(duel);
+    await this.progressionService.award(duel);
+
+    this.logger.log(`Flagged duel released: ${duelId}`);
+  }
+
   async cancelAndRefund(duelId: string): Promise<void> {
     const duel = await this.duelsRepo.findOne({ where: { id: duelId } });
 
@@ -535,7 +565,7 @@ export class DuelsService {
 
     const stake = parseFloat(duel.stake);
 
-    if (stake > 0) {
+    if (stake > 0 && !duel.isFlagged) {
       const winnerWallet = await this.walletService.findByUserId(winnerId);
       const prize = stake * 2 * 0.75;
 
@@ -544,6 +574,8 @@ export class DuelsService {
         extra: { duelId, reason: 'forfeit' },
       });
     }
+
+    await this.progressionService.award(duel);
 
     this.logger.log(`Duel forfeited: ${duelId} by ${forfeitingUserId} winner=${winnerId}`);
 
@@ -963,6 +995,7 @@ export class DuelsService {
 
     await this.duelsRepo.save(duel);
     await this.handleCompletionPrize(duel);
+    await this.progressionService.award(duel);
 
     const stats = await this.buildCompletionStats(duel);
     this.eventEmitter.emit('duel.completed', { duel, ...stats });
@@ -1024,7 +1057,7 @@ export class DuelsService {
   private async handleCompletionPrize(duel: Duel): Promise<void> {
     const stake = parseFloat(duel.stake);
 
-    if (stake <= 0) return;
+    if (stake <= 0 || duel.isFlagged) return;
 
     const isDraw = duel.resolution === 'draw' || (duel.resolution === null && duel.isTie);
 

@@ -173,6 +173,26 @@ export class AdminController {
     return this.adminService.triggerPayout(dto);
   }
 
+  @Patch('duels/:id/flag')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Flag a duel — holds wallet payout and progression pending review (admin)' })
+  @ApiParam({ name: 'id', type: String })
+  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  async flagDuel(@Param('id') id: string) {
+    await this.duelsService.flagDuel(id);
+    return { success: true };
+  }
+
+  @Patch('duels/:id/release')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Release a flagged duel — credits wallet payout and awards XP/SP (admin)' })
+  @ApiParam({ name: 'id', type: String })
+  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  async releaseFlaggedDuel(@Param('id') id: string) {
+    await this.duelsService.releaseFlaggedDuel(id);
+    return { success: true };
+  }
+
   @Get('duels')
   @ApiOperation({ summary: 'List all duels (admin)' })
   @ApiResponse({ status: 200 })

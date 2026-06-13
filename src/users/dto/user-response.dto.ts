@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { User } from '../entities/user.entity';
+import { levelFromXp } from '../../duels/duel-progression';
 
 export class UserResponseDto {
   @ApiProperty()
@@ -42,6 +43,27 @@ export class UserResponseDto {
   isAdmin: boolean;
 
   @ApiProperty()
+  lifetimeXp: number;
+
+  @ApiProperty()
+  level: number;
+
+  @ApiProperty()
+  intoLevel: number;
+
+  @ApiPropertyOptional()
+  nextLevelAt: number | null;
+
+  @ApiProperty()
+  seasonPoints: number;
+
+  @ApiPropertyOptional()
+  seasonId: string | null;
+
+  @ApiProperty()
+  duelWinStreak: number;
+
+  @ApiProperty()
   createdAt: Date;
 
   @ApiProperty()
@@ -63,6 +85,17 @@ export class UserResponseDto {
     dto.isVerified = user.isVerified;
     dto.isActive = user.isActive;
     dto.isAdmin = user.isAdmin;
+
+    const xp = Number(user.lifetimeXp);
+    const lvl = levelFromXp(xp);
+    dto.lifetimeXp = xp;
+    dto.level = lvl.level;
+    dto.intoLevel = lvl.intoLevel;
+    dto.nextLevelAt = lvl.nextLevelAt;
+    dto.seasonPoints = user.seasonPoints;
+    dto.seasonId = user.seasonId;
+    dto.duelWinStreak = user.duelWinStreak;
+
     dto.createdAt = user.createdAt;
     dto.updatedAt = user.updatedAt;
 
