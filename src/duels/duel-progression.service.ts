@@ -208,7 +208,7 @@ export class DuelProgressionService {
     const highWater =
       isHigherRank(newRank, user.allTimeHighestRank as RankTier | null)
         ? newRank
-        : (user.allTimeHighestRank ?? 'Bronze');
+        : (user.allTimeHighestRank ?? 'Spectator');
 
     await this.usersRepo.update(user.id, {
       lifetimeXp: Number(user.lifetimeXp) + award.xp,
