@@ -12,6 +12,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { UserResponseDto } from './dto/user-response.dto';
+import { UserProfileDto } from './dto/user-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { PaystackService } from '../services/paystack/paystack.service';
@@ -43,6 +44,13 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ): Promise<{ success: true }> {
     return this.usersService.updateMe(user.sub, dto);
+  }
+
+  @Get('me/profile')
+  @ApiOperation({ summary: 'Get current user full profile (XP, level, rank, duel record)' })
+  @ApiResponse({ status: 200, type: UserProfileDto })
+  async getMyProfile(@CurrentUser() user: JwtPayload): Promise<UserProfileDto> {
+    return this.usersService.getProfile(user.sub);
   }
 
   @Get('me/stats')

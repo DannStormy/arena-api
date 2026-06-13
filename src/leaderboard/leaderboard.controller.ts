@@ -3,7 +3,10 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@ne
 import { IsEnum, IsOptional } from 'class-validator';
 import { LeaderboardService } from './leaderboard.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { LeaderboardEntryDto } from './dto/leaderboard-entry.dto';
+import { DuelLeaderboardEntryDto } from './dto/duel-leaderboard-entry.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -27,5 +30,16 @@ export class LeaderboardController {
   @ApiResponse({ status: 200, type: [LeaderboardEntryDto] })
   async getLeaderboard(@Query() query: LeaderboardQueryDto): Promise<LeaderboardEntryDto[]> {
     return this.leaderboardService.getGlobalLeaderboard(query.arena);
+  }
+
+  @Get('duels')
+  @ApiOperation({ summary: 'Duel leaderboard ranked by season points; arena filter for monthly per-arena SP' })
+  @ApiQuery({ name: 'arena', enum: TournamentArena, required: false })
+  @ApiResponse({ status: 200, type: [DuelLeaderboardEntryDto] })
+  async getDuelLeaderboard(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: LeaderboardQueryDto,
+  ): Promise<DuelLeaderboardEntryDto[]> {
+    return this.leaderboardService.getDuelLeaderboard(user.sub, query.arena);
   }
 }

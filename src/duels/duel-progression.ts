@@ -2,6 +2,26 @@ import { DuelResolution } from './duel-resolver';
 
 export type Tier = 'free' | 'staked';
 
+/** Captured at award time; used by the reveal animation and duel-detail response. */
+export interface ProgressionSnapshot {
+  xpBefore: number;
+  xpAfter: number;
+  levelBefore: number;
+  levelAfter: number;
+  intoLevelBefore: number;
+  intoLevelAfter: number;
+  nextLevelAt: number | null;
+  spBefore: number;
+  spAfter: number;
+  rankBefore: string;
+  rankAfter: string;
+  rankFloor: number;
+  nextRankAt: number | null;
+  xpAwarded: number;
+  spAwarded: number;
+  firstDuelOfDayBonus: number; // 0 or 50
+}
+
 export interface DuelAward {
   seasonPoints: number;
   xp: number;

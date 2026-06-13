@@ -66,6 +66,9 @@ export class User {
   @Column({ type: 'int', default: 0 })
   duelWinStreak: number;
 
+  @Column({ type: 'varchar', nullable: true })
+  allTimeHighestRank: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

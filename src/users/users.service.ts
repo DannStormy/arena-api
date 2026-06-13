@@ -9,6 +9,12 @@ import { EntryStatus } from '../tournaments/entities/tournament-entry.entity';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateBankDetailsDto } from './dto/update-bank-details.dto';
 import { UserResponseDto } from './dto/user-response.dto';
+import { UserProfileDto } from './dto/user-profile.dto';
+import { Duel } from '../duels/entities/duel.entity';
+import { DuelAnswer } from '../duels/entities/duel-answer.entity';
+import { DuelStatus } from '../duels/types/duel-status.enum';
+import { levelFromXp, currentSeasonId } from '../duels/duel-progression';
+import { rankFromSeasonPoints } from '../common/rank-tiers';
 
 @Injectable()
 export class UsersService {
@@ -21,6 +27,10 @@ export class UsersService {
     private readonly entriesRepo: Repository<TournamentEntry>,
     @InjectRepository(GameSession)
     private readonly sessionsRepo: Repository<GameSession>,
+    @InjectRepository(Duel)
+    private readonly duelsRepo: Repository<Duel>,
+    @InjectRepository(DuelAnswer)
+    private readonly duelAnswersRepo: Repository<DuelAnswer>,
   ) {}
 
   async findById(id: string): Promise<User> {
@@ -117,4 +127,106 @@ export class UsersService {
 
     return { tournamentsPlayed, questionsAnswered, correctAnswers, accuracy, totalPrizeWon };
   }
+
+  async getProfile(userId: string): Promise<UserProfileDto> {
+    const user = await this.findById(userId);
+
+    // ── Duel record ──────────────────────────────────────────────────────────
+    const [duelRecord, answerStats, sessionStats] = await Promise.all([
+      this.duelsRepo
+        .createQueryBuilder('d')
+        .select([
+          `SUM(CASE WHEN d.winnerId = :uid THEN 1 ELSE 0 END)::int AS wins`,
+          `SUM(CASE WHEN d.status = 'completed' AND d.winnerId IS NOT NULL AND d.winnerId != :uid THEN 1 ELSE 0 END)::int AS losses`,
+          `SUM(CASE WHEN d.status = 'completed' AND d.winnerId IS NULL THEN 1 ELSE 0 END)::int AS draws`,
+          `COUNT(*)::int AS total`,
+        ])
+        .where('(d.challengerId = :uid OR d.opponentId = :uid)', { uid: userId })
+        .andWhere('d.status = :status', { status: DuelStatus.COMPLETED })
+        .getRawOne<{ wins: string; losses: string; draws: string; total: string }>(),
+
+      this.duelAnswersRepo
+        .createQueryBuilder('a')
+        .select([
+          `MIN(CASE WHEN a.isCorrect = true AND a.timeTakenMs IS NOT NULL AND a.timeTakenMs > 0 THEN a.timeTakenMs END)::int AS "fastestAnswerMs"`,
+          `COUNT(*)::int AS total`,
+          `SUM(CASE WHEN a.isCorrect = true THEN 1 ELSE 0 END)::int AS correct`,
+        ])
+        .where('a.userId = :uid', { uid: userId })
+        .andWhere('a.isSteal = false')
+        .getRawOne<{ fastestAnswerMs: string | null; total: string; correct: string }>(),
+
+      this.sessionsRepo
+        .createQueryBuilder('s')
+        .select([
+          `COALESCE(SUM(s."totalAnswered"), 0)::int AS "sessionTotal"`,
+          `COALESCE(SUM(s."correctAnswers"), 0)::int AS "sessionCorrect"`,
+        ])
+        .where('s.userId = :uid', { uid: userId })
+        .andWhere('s.status = :status', { status: SessionStatus.COMPLETED })
+        .getRawOne<{ sessionTotal: string; sessionCorrect: string }>(),
+    ]);
+
+    const wins = Number(duelRecord?.wins ?? 0);
+    const losses = Number(duelRecord?.losses ?? 0);
+    const draws = Number(duelRecord?.draws ?? 0);
+    const totalDuels = Number(duelRecord?.total ?? 0);
+    const winRate = totalDuels > 0 ? Math.round((wins / totalDuels) * 10000) / 100 : 0;
+
+    const fastestAnswerMs =
+      answerStats?.fastestAnswerMs != null ? Number(answerStats.fastestAnswerMs) : null;
+    const duelTotal = Number(answerStats?.total ?? 0);
+    const duelCorrect = Number(answerStats?.correct ?? 0);
+
+    const sessionTotal = Number(sessionStats?.sessionTotal ?? 0);
+    const sessionCorrect = Number(sessionStats?.sessionCorrect ?? 0);
+
+    const combinedTotal = duelTotal + sessionTotal;
+    const combinedCorrect = duelCorrect + sessionCorrect;
+    const avgAccuracy =
+      combinedTotal > 0 ? Math.round((combinedCorrect / combinedTotal) * 10000) / 100 : 0;
+
+    // ── XP / Level ───────────────────────────────────────────────────────────
+    const xp = Number(user.lifetimeXp);
+    const { level, intoLevel, nextLevelAt } = levelFromXp(xp);
+
+    // ── Season rank ──────────────────────────────────────────────────────────
+    const seasonId = currentSeasonId();
+    const sp = user.seasonId === seasonId ? user.seasonPoints : 0;
+    const { rank: seasonRank, rankFloor, nextRankAt } = rankFromSeasonPoints(sp);
+
+    const dto = new UserProfileDto();
+    dto.userId = user.id;
+    dto.username = user.username;
+    dto.avatarInitials = computeInitials(user.username);
+    dto.avatarUrl = user.avatarUrl ?? null;
+    dto.joinedAt = user.createdAt;
+    dto.lifetimeXp = xp;
+    dto.level = level;
+    dto.intoLevel = intoLevel;
+    dto.nextLevelAt = nextLevelAt;
+    dto.seasonPoints = sp;
+    dto.seasonRank = seasonRank;
+    dto.rankFloor = rankFloor;
+    dto.nextRankAt = nextRankAt;
+    dto.allTimeHighestRank = user.allTimeHighestRank;
+    dto.wins = wins;
+    dto.losses = losses;
+    dto.draws = draws;
+    dto.totalDuels = totalDuels;
+    dto.winRate = winRate;
+    dto.currentWinStreak = user.duelWinStreak;
+    dto.fastestAnswerMs = fastestAnswerMs;
+    dto.avgAccuracy = avgAccuracy;
+
+    return dto;
+  }
+}
+
+function computeInitials(username: string): string {
+  const words = username.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return username.slice(0, 2).toUpperCase();
 }

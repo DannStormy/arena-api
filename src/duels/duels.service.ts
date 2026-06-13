@@ -147,7 +147,7 @@ export class DuelsService {
     return DuelPublicPreviewDto.fromEntity(duel, challenger?.username ?? '');
   }
 
-  async getDuelResponse(duelId: string): Promise<DuelResponseDto | null> {
+  async getDuelResponse(duelId: string, requestingUserId?: string): Promise<DuelResponseDto | null> {
     const duel = await this.duelsRepo.findOne({ where: { id: duelId } });
 
     if (!duel) return null;
@@ -207,6 +207,7 @@ export class DuelsService {
       challengerCorrect,
       opponentCorrect,
       questionSummary,
+      requestingUserId,
     });
   }
 

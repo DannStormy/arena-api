@@ -8,6 +8,7 @@ import {
 import { DuelMode } from '../types/duel-mode.enum';
 import { DuelStatus } from '../types/duel-status.enum';
 import { TournamentArena } from '../../tournaments/types/tournament-arena.enum';
+import { ProgressionSnapshot } from '../duel-progression';
 
 @Entity('duels')
 export class Duel {
@@ -85,6 +86,12 @@ export class Duel {
 
   @Column({ type: 'int', nullable: true })
   opponentSpAwarded: number | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  challengerProgression: ProgressionSnapshot | null;
+
+  @Column({ type: 'jsonb', nullable: true })
+  opponentProgression: ProgressionSnapshot | null;
 
   @Column({ type: 'boolean', default: false })
   isTie: boolean;

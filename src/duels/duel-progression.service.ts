@@ -4,7 +4,14 @@ import { Repository } from 'typeorm';
 import { User } from '../users/entities/user.entity';
 import { Duel } from './entities/duel.entity';
 import { DuelResolution } from './duel-resolver';
-import { awardFor, levelFromXp, currentSeasonId, FIRST_DUEL_DAY_XP } from './duel-progression';
+import {
+  awardFor,
+  levelFromXp,
+  currentSeasonId,
+  FIRST_DUEL_DAY_XP,
+  ProgressionSnapshot,
+} from './duel-progression';
+import { rankFromSeasonPoints, isHigherRank, RankTier } from '../common/rank-tiers';
 
 @Injectable()
 export class DuelProgressionService {
@@ -37,7 +44,7 @@ export class DuelProgressionService {
     const staked = parseFloat(duel.stake) > 0;
     const seasonId = currentSeasonId();
 
-    const [cContext, oContext] = await Promise.all([
+    const [cCtx, oCtx] = await Promise.all([
       this.buildContext(challenger, duel),
       this.buildContext(opponent, duel),
     ]);
@@ -47,8 +54,8 @@ export class DuelProgressionService {
       resolution: duel.resolution as DuelResolution,
       forfeited: duel.resolution === 'forfeit' && duel.winnerId !== challenger.id,
       staked,
-      consecutiveWinsAfterThis: cContext.streakAfter,
-      freeWinsToday: cContext.freeWinsToday,
+      consecutiveWinsAfterThis: cCtx.streakAfter,
+      freeWinsToday: cCtx.freeWinsToday,
     });
 
     const oAward = awardFor({
@@ -56,39 +63,61 @@ export class DuelProgressionService {
       resolution: duel.resolution as DuelResolution,
       forfeited: duel.resolution === 'forfeit' && duel.winnerId !== opponent.id,
       staked,
-      consecutiveWinsAfterThis: oContext.streakAfter,
-      freeWinsToday: oContext.freeWinsToday,
+      consecutiveWinsAfterThis: oCtx.streakAfter,
+      freeWinsToday: oCtx.freeWinsToday,
     });
 
-    // First-duel-of-day bonus: +50 XP each, once per user per UTC day
+    // First-duel-of-day bonus: +50 XP, once per user per UTC day
     const [cFirst, oFirst] = await Promise.all([
       this.isFirstDuelToday(challenger.id, duel.id),
       this.isFirstDuelToday(opponent.id, duel.id),
     ]);
 
-    if (cFirst) cAward.xp += FIRST_DUEL_DAY_XP;
-    if (oFirst) oAward.xp += FIRST_DUEL_DAY_XP;
+    const cBonus = cFirst ? FIRST_DUEL_DAY_XP : 0;
+    const oBonus = oFirst ? FIRST_DUEL_DAY_XP : 0;
 
+    cAward.xp += cBonus;
+    oAward.xp += oBonus;
+
+    // ── Capture BEFORE values (inline season reset awareness) ────────────────
+    const cXpBefore = Number(challenger.lifetimeXp);
+    const cSpBefore = challenger.seasonId === seasonId ? challenger.seasonPoints : 0;
+    const oXpBefore = Number(opponent.lifetimeXp);
+    const oSpBefore = opponent.seasonId === seasonId ? opponent.seasonPoints : 0;
+
+    // ── Apply to users ───────────────────────────────────────────────────────
     await Promise.all([
-      this.applyAward(challenger, cAward, seasonId, cContext.updatedStreak),
-      this.applyAward(opponent, oAward, seasonId, oContext.updatedStreak),
+      this.applyAward(challenger, cAward, seasonId, cCtx.updatedStreak, cSpBefore),
+      this.applyAward(opponent, oAward, seasonId, oCtx.updatedStreak, oSpBefore),
     ]);
 
-    // Persist award amounts and mark idempotency guard
+    // ── Build snapshots ──────────────────────────────────────────────────────
+    const cSnapshot = this.buildSnapshot(
+      cXpBefore, cAward.xp, cSpBefore, cAward.seasonPoints, cBonus,
+    );
+    const oSnapshot = this.buildSnapshot(
+      oXpBefore, oAward.xp, oSpBefore, oAward.seasonPoints, oBonus,
+    );
+
+    // ── Persist ──────────────────────────────────────────────────────────────
     await this.duelsRepo.update(duel.id, {
       progressionAwarded: true,
       challengerXpAwarded: cAward.xp,
       challengerSpAwarded: cAward.seasonPoints,
       opponentXpAwarded: oAward.xp,
       opponentSpAwarded: oAward.seasonPoints,
+      challengerProgression: cSnapshot,
+      opponentProgression: oSnapshot,
     });
 
-    // Keep in-memory copy in sync so callers see updated values
+    // Keep in-memory copy in sync so callers see updated values immediately
     duel.progressionAwarded = true;
     duel.challengerXpAwarded = cAward.xp;
     duel.challengerSpAwarded = cAward.seasonPoints;
     duel.opponentXpAwarded = oAward.xp;
     duel.opponentSpAwarded = oAward.seasonPoints;
+    duel.challengerProgression = cSnapshot;
+    duel.opponentProgression = oSnapshot;
 
     this.logger.log(
       `Progression awarded: duel=${duel.id} ` +
@@ -99,6 +128,38 @@ export class DuelProgressionService {
 
   // ── Private helpers ─────────────────────────────────────────────────────────
 
+  private buildSnapshot(
+    xpBefore: number,
+    xpAwarded: number,
+    spBefore: number,
+    spAwarded: number,
+    firstDuelOfDayBonus: number,
+  ): ProgressionSnapshot {
+    const xpAfter = xpBefore + xpAwarded;
+    const spAfter = spBefore + spAwarded;
+
+    const { level: levelBefore, intoLevel: intoLevelBefore } = levelFromXp(xpBefore);
+    const {
+      level: levelAfter,
+      intoLevel: intoLevelAfter,
+      nextLevelAt,
+    } = levelFromXp(xpAfter);
+
+    const { rank: rankBefore, rankFloor, nextRankAt } = rankFromSeasonPoints(spBefore);
+    const { rank: rankAfter } = rankFromSeasonPoints(spAfter);
+
+    return {
+      xpBefore, xpAfter, xpAwarded,
+      levelBefore, levelAfter,
+      intoLevelBefore, intoLevelAfter,
+      nextLevelAt,
+      spBefore, spAfter, spAwarded,
+      rankBefore, rankAfter,
+      rankFloor, nextRankAt,
+      firstDuelOfDayBonus,
+    };
+  }
+
   private async buildContext(
     user: User,
     duel: Duel,
@@ -107,9 +168,9 @@ export class DuelProgressionService {
     const isWinner = duel.winnerId === userId;
     const resolution = duel.resolution!;
 
-    // Streak after this duel
     let streakAfter: number;
     let updatedStreak: number;
+
     if (!isWinner || resolution === 'draw') {
       streakAfter = 0;
       updatedStreak = 0;
@@ -122,7 +183,6 @@ export class DuelProgressionService {
       updatedStreak = user.duelWinStreak + 1;
     }
 
-    // Free wins today (excluding this duel)
     const todayStart = startOfUtcDay();
     const freeWinsToday = await this.duelsRepo
       .createQueryBuilder('d')
@@ -142,16 +202,20 @@ export class DuelProgressionService {
     award: { seasonPoints: number; xp: number },
     seasonId: string,
     updatedStreak: number,
+    spBefore: number, // effective SP before award (already season-reset-aware)
   ): Promise<void> {
-    // Inline season reset: if user's points belong to a previous month, start fresh
-    const currentSp =
-      user.seasonId === seasonId ? user.seasonPoints : 0;
+    const newRank = rankFromSeasonPoints(spBefore + award.seasonPoints).rank;
+    const highWater =
+      isHigherRank(newRank, user.allTimeHighestRank as RankTier | null)
+        ? newRank
+        : (user.allTimeHighestRank ?? 'Bronze');
 
     await this.usersRepo.update(user.id, {
       lifetimeXp: Number(user.lifetimeXp) + award.xp,
-      seasonPoints: currentSp + award.seasonPoints,
+      seasonPoints: spBefore + award.seasonPoints,
       seasonId,
       duelWinStreak: updatedStreak,
+      allTimeHighestRank: highWater,
     });
   }
 

@@ -111,8 +111,11 @@ export class DuelsController {
   @ApiOperation({ summary: 'Get a duel by ID' })
   @ApiResponse({ status: 200, type: DuelResponseDto })
   @ApiResponse({ status: 404, description: 'Duel not found' })
-  async getDuel(@Param('id') id: string): Promise<DuelResponseDto> {
-    const dto = await this.duelsService.getDuelResponse(id);
+  async getDuel(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+  ): Promise<DuelResponseDto> {
+    const dto = await this.duelsService.getDuelResponse(id, user.sub);
 
     if (!dto) {
       throw new NotFoundException('Duel not found');

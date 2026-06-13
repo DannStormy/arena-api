@@ -4,6 +4,7 @@ import { DuelMode } from '../types/duel-mode.enum';
 import { DuelStatus } from '../types/duel-status.enum';
 import { TournamentArena } from '../../tournaments/types/tournament-arena.enum';
 import { QuestionSummaryItem } from '../duels.service';
+import { ProgressionSnapshot } from '../duel-progression';
 
 export class DuelResponseDto {
   @ApiProperty()
@@ -111,6 +112,9 @@ export class DuelResponseDto {
   @ApiProperty()
   questionSummary: QuestionSummaryItem[];
 
+  @ApiPropertyOptional()
+  myProgression: ProgressionSnapshot | null;
+
   static fromEntity(
     duel: Duel,
     opts: {
@@ -120,6 +124,7 @@ export class DuelResponseDto {
       challengerCorrect?: number;
       opponentCorrect?: number;
       questionSummary?: QuestionSummaryItem[];
+      requestingUserId?: string;
     } = {},
   ): DuelResponseDto {
     const dto = new DuelResponseDto();
@@ -162,6 +167,18 @@ export class DuelResponseDto {
     dto.challengerCorrect = opts.challengerCorrect ?? 0;
     dto.opponentCorrect = opts.opponentCorrect ?? 0;
     dto.questionSummary = opts.questionSummary ?? [];
+
+    if (opts.requestingUserId) {
+      if (opts.requestingUserId === duel.challengerId) {
+        dto.myProgression = duel.challengerProgression ?? null;
+      } else if (opts.requestingUserId === duel.opponentId) {
+        dto.myProgression = duel.opponentProgression ?? null;
+      } else {
+        dto.myProgression = null;
+      }
+    } else {
+      dto.myProgression = null;
+    }
 
     return dto;
   }
