@@ -98,8 +98,18 @@ export class UsersService {
     correctAnswers: number;
     accuracy: number;
     totalPrizeWon: string;
+    lifetimeXp: number;
+    level: number;
+    intoLevel: number;
+    nextLevelAt: number | null;
+    seasonPoints: number;
+    seasonRank: string;
+    rankFloor: number;
+    nextRankAt: number | null;
+    allTimeHighestRank: string | null;
   }> {
-    const [entryStats, sessionStats] = await Promise.all([
+    const [user, entryStats, sessionStats] = await Promise.all([
+      this.findById(userId),
       this.entriesRepo
         .createQueryBuilder('e')
         .select('COUNT(e.id)::int', 'tournamentsPlayed')
@@ -125,7 +135,29 @@ export class UsersService {
         ? Math.round((correctAnswers / questionsAnswered) * 10000) / 100
         : 0;
 
-    return { tournamentsPlayed, questionsAnswered, correctAnswers, accuracy, totalPrizeWon };
+    const xp = Number(user.lifetimeXp);
+    const { level, intoLevel, nextLevelAt } = levelFromXp(xp);
+
+    const seasonId = currentSeasonId();
+    const sp = user.seasonId === seasonId ? user.seasonPoints : 0;
+    const { rank: seasonRank, rankFloor, nextRankAt } = rankFromSeasonPoints(sp);
+
+    return {
+      tournamentsPlayed,
+      questionsAnswered,
+      correctAnswers,
+      accuracy,
+      totalPrizeWon,
+      lifetimeXp: xp,
+      level,
+      intoLevel,
+      nextLevelAt,
+      seasonPoints: sp,
+      seasonRank,
+      rankFloor,
+      nextRankAt,
+      allTimeHighestRank: user.allTimeHighestRank,
+    };
   }
 
   async getProfile(userId: string): Promise<UserProfileDto> {
