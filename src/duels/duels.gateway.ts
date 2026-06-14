@@ -342,7 +342,7 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
       if (result.duelComplete) {
         this.clearAllTimers(duel.id);
 
-        this.server.to(room).emit(DuelEvents.DUEL_COMPLETE, {
+        this.emitDuelCompletePerPlayer(result.updatedDuel, {
           winnerId: result.updatedDuel.winnerId,
           isTie: result.updatedDuel.isTie,
           challengerScore: result.updatedDuel.challengerScore,
@@ -438,7 +438,7 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     challengerCorrect: number;
     opponentCorrect: number;
   }): void {
-    this.server.to(`duel:${duel.id}`).emit(DuelEvents.DUEL_COMPLETE, {
+    this.emitDuelCompletePerPlayer(duel, {
       ...duel,
       questionSummary,
       challengerCorrect,
@@ -544,7 +544,7 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
           if (result.duelComplete) {
             this.clearAllTimers(duel.id);
 
-            this.server.to(`duel:${duel.id}`).emit(DuelEvents.DUEL_COMPLETE, {
+            this.emitDuelCompletePerPlayer(result.updatedDuel, {
               winnerId: result.updatedDuel.winnerId,
               isTie: result.updatedDuel.isTie,
               challengerScore: result.updatedDuel.challengerScore,
@@ -582,7 +582,7 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
       if (result.duelComplete) {
         this.clearAllTimers(duelId);
 
-        this.server.to(room).emit(DuelEvents.DUEL_COMPLETE, {
+        this.emitDuelCompletePerPlayer(result.updatedDuel, {
           winnerId: result.updatedDuel.winnerId,
           isTie: result.updatedDuel.isTie,
           challengerScore: result.updatedDuel.challengerScore,
@@ -593,6 +593,36 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
       }
     } catch (err) {
       this.logger.error(`handleStealTimeout error duel=${duelId}`, err);
+    }
+  }
+
+  /**
+   * Emit DUEL_COMPLETE to each participant individually so myProgression
+   * carries that player's own snapshot, not their opponent's.
+   * Silently skips any player whose socket is not currently connected —
+   * they will receive the snapshot via REST on reconnect.
+   */
+  private emitDuelCompletePerPlayer(
+    duel: Duel,
+    payload: Record<string, unknown>,
+  ): void {
+    const challengerSocket = this.findSocketByUserId(duel.challengerId);
+    const opponentSocket = duel.opponentId
+      ? this.findSocketByUserId(duel.opponentId)
+      : undefined;
+
+    if (challengerSocket) {
+      challengerSocket.emit(DuelEvents.DUEL_COMPLETE, {
+        ...payload,
+        myProgression: duel.challengerProgression ?? null,
+      });
+    }
+
+    if (opponentSocket) {
+      opponentSocket.emit(DuelEvents.DUEL_COMPLETE, {
+        ...payload,
+        myProgression: duel.opponentProgression ?? null,
+      });
     }
   }
 
