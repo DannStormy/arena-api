@@ -14,12 +14,14 @@ import { DuelsGateway } from './duels.gateway';
 import { DuelsController } from './duels.controller';
 import { QuestionsModule } from '../questions/questions.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { ProgressionModule } from '../progression/progression.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([DuelConfig, Duel, DuelAnswer, TournamentEntry, User]),
     QuestionsModule,
     WalletModule,
+    ProgressionModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

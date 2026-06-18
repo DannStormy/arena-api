@@ -23,6 +23,7 @@ import { TransactionType } from '../wallet/types/transaction-type.enum';
 import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { LeaderboardEntryDto } from '../leaderboard/dto/leaderboard-entry.dto';
+import { ProgressionAwardService } from '../progression/services/progression-award.service';
 
 @Injectable()
 export class TournamentsService {
@@ -36,6 +37,7 @@ export class TournamentsService {
     @InjectRepository(GameSession)
     private readonly sessionsRepo: Repository<GameSession>,
     private readonly walletService: WalletService,
+    private readonly progressionAwardService: ProgressionAwardService,
   ) {}
 
   async create(createdBy: string, dto: CreateTournamentDto): Promise<TournamentResponseDto> {
@@ -309,6 +311,15 @@ export class TournamentsService {
     await this.tournamentsRepo.update(tournamentId, { status: next, ...timestamps });
 
     this.logger.log(`Tournament ${tournamentId} status: ${current} → ${next}`);
+
+    if (next === TournamentStatus.COMPLETED) {
+      this.progressionAwardService.awardTournamentResult(tournamentId).catch((err: unknown) => {
+        this.logger.error(
+          `Progression award failed for tournament ${tournamentId} — result unaffected`,
+          err,
+        );
+      });
+    }
 
     return { success: true };
   }

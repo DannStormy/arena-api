@@ -14,6 +14,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { PaystackModule } from './services/paystack/paystack.module';
 import { AdminModule } from './admin/admin.module';
 import { DuelsModule } from './duels/duels.module';
+import { ProgressionModule } from './progression/progression.module';
 
 @Module({
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
@@ -45,6 +46,7 @@ import { DuelsModule } from './duels/duels.module';
     PaystackModule,
     AdminModule,
     DuelsModule,
+    ProgressionModule,
   ],
 })
 export class AppModule {}
