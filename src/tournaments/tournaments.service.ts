@@ -14,11 +14,13 @@ import { SessionStatus } from '../game-sessions/types/session-status.enum';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 import { TournamentListItemDto } from './dto/tournament-list-item.dto';
+import { TournamentHistoryItemDto } from './dto/tournament-history-item.dto';
 import { TournamentStatus } from './types/tournament-status.enum';
 import { ListTournamentsParams } from './types/list-tournaments-params';
 import { AllowedTargetStatus } from './dto/update-tournament-status.dto';
 import { WalletService } from '../wallet/wallet.service';
 import { TransactionType } from '../wallet/types/transaction-type.enum';
+import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { LeaderboardEntryDto } from '../leaderboard/dto/leaderboard-entry.dto';
 
@@ -309,6 +311,48 @@ export class TournamentsService {
     this.logger.log(`Tournament ${tournamentId} status: ${current} → ${next}`);
 
     return { success: true };
+  }
+
+  async getTournamentHistory(
+    userId: string,
+    query: PaginatedQueryDto,
+  ): Promise<PaginatedResponseDto<TournamentHistoryItemDto>> {
+    const total = await this.entriesRepo.count({ where: { userId } });
+
+    if (total === 0) {
+      return new PaginatedResponseDto([], 0, query.page, query.limit);
+    }
+
+    const order = query.order.toUpperCase() as 'ASC' | 'DESC';
+
+    const rows = await this.entriesRepo
+      .createQueryBuilder('e')
+      .innerJoin('tournaments', 't', 't.id = e."tournamentId"')
+      .select([
+        'e."tournamentId"   AS "tournamentId"',
+        'e.score            AS "score"',
+        'e."prizeWon"       AS "prizeWon"',
+        'e."joinedAt"       AS "playedAt"',
+        't.title            AS "name"',
+        't.arena            AS "arena"',
+        't."gameType"       AS "gameType"',
+        't.status           AS "tournamentStatus"',
+        't."completedAt"    AS "completedAt"',
+        `(SELECT COUNT(*)::int FROM tournament_entries e2 WHERE e2."tournamentId" = e."tournamentId" AND e2.score > e.score) + 1 AS "rank"`,
+        `(SELECT COUNT(*)::int FROM tournament_entries e3 WHERE e3."tournamentId" = e."tournamentId") AS "totalPlayers"`,
+      ])
+      .where('e."userId" = :userId', { userId })
+      .orderBy('e."joinedAt"', order)
+      .limit(query.limit)
+      .offset((query.page - 1) * query.limit)
+      .getRawMany<Parameters<typeof TournamentHistoryItemDto.fromRaw>[0]>();
+
+    return new PaginatedResponseDto(
+      rows.map(TournamentHistoryItemDto.fromRaw),
+      total,
+      query.page,
+      query.limit,
+    );
   }
 
   async updateEntryScore(tournamentId: string, userId: string, score: number): Promise<void> {

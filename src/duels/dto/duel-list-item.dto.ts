@@ -50,6 +50,15 @@ export class DuelListItemDto {
   @ApiProperty()
   isTie: boolean;
 
+  @ApiPropertyOptional({
+    enum: ['score', 'speed_tiebreak', 'sudden_death', 'forfeit', 'draw'],
+    nullable: true,
+  })
+  resolution: 'score' | 'speed_tiebreak' | 'sudden_death' | 'forfeit' | 'draw' | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  tiebreakDeltaMs: number | null;
+
   @ApiProperty()
   createdAt: Date;
 
@@ -77,6 +86,8 @@ export class DuelListItemDto {
     dto.opponentScore = duel.opponentScore;
     dto.winnerId = duel.winnerId;
     dto.isTie = duel.isTie;
+    dto.resolution = duel.resolution;
+    dto.tiebreakDeltaMs = duel.tiebreakDeltaMs;
     dto.createdAt = duel.createdAt;
     dto.completedAt = duel.completedAt;
 

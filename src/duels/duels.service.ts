@@ -556,7 +556,7 @@ export class DuelsService {
 
     if (!winnerId) return;
 
-    duel.status = DuelStatus.CANCELLED;
+    duel.status = DuelStatus.COMPLETED;
     duel.winnerId = winnerId;
     duel.resolution = 'forfeit';
     duel.tiebreakDeltaMs = 0;
@@ -660,20 +660,23 @@ export class DuelsService {
     let stealResult: { success: boolean } | null = null;
     let immediateComplete = false;
 
+    // Track score deltas separately so we can apply them as atomic SQL increments,
+    // preventing the lost-update race where concurrent saves overwrite each other's score.
+    let challengerScoreDelta = 0;
+    let opponentScoreDelta = 0;
+    const nonScoreUpdate: Partial<Duel> = {};
+
     if (isStealAttempt) {
-      // Resolve steal
       stealResult = { success: isCorrect };
 
       if (isCorrect) {
         scoreAdded = 1;
-
-        if (isChallenger) {
-          freshDuel.challengerScore += 1;
-        } else {
-          freshDuel.opponentScore += 1;
-        }
+        if (isChallenger) challengerScoreDelta = 1;
+        else opponentScoreDelta = 1;
       }
 
+      nonScoreUpdate.stealOpportunityUserId = null;
+      nonScoreUpdate.stealQuestionId = null;
       freshDuel.stealOpportunityUserId = null;
       freshDuel.stealQuestionId = null;
     } else {
@@ -682,12 +685,8 @@ export class DuelsService {
         case DuelMode.BLITZ: {
           if (isCorrect) {
             scoreAdded = 1;
-
-            if (isChallenger) {
-              freshDuel.challengerScore += 1;
-            } else {
-              freshDuel.opponentScore += 1;
-            }
+            if (isChallenger) challengerScoreDelta = 1;
+            else opponentScoreDelta = 1;
           }
           break;
         }
@@ -696,22 +695,27 @@ export class DuelsService {
           if (isCorrect) {
             const currentStreak = isChallenger ? freshDuel.challengerStreak : freshDuel.opponentStreak;
             const newStreak = currentStreak + 1;
-
             scoreAdded = newStreak;
 
             if (isChallenger) {
-              freshDuel.challengerScore += newStreak;
+              challengerScoreDelta = newStreak;
+              nonScoreUpdate.challengerStreak = newStreak;
+              nonScoreUpdate.challengerMaxStreak = Math.max(freshDuel.challengerMaxStreak, newStreak);
               freshDuel.challengerStreak = newStreak;
               freshDuel.challengerMaxStreak = Math.max(freshDuel.challengerMaxStreak, newStreak);
             } else {
-              freshDuel.opponentScore += newStreak;
+              opponentScoreDelta = newStreak;
+              nonScoreUpdate.opponentStreak = newStreak;
+              nonScoreUpdate.opponentMaxStreak = Math.max(freshDuel.opponentMaxStreak, newStreak);
               freshDuel.opponentStreak = newStreak;
               freshDuel.opponentMaxStreak = Math.max(freshDuel.opponentMaxStreak, newStreak);
             }
           } else {
             if (isChallenger) {
+              nonScoreUpdate.challengerStreak = 0;
               freshDuel.challengerStreak = 0;
             } else {
+              nonScoreUpdate.opponentStreak = 0;
               freshDuel.opponentStreak = 0;
             }
           }
@@ -719,15 +723,10 @@ export class DuelsService {
         }
 
         case DuelMode.SUDDEN_DEATH: {
-          // Only score — elimination is deferred until both players have answered
           if (isCorrect) {
             scoreAdded = 1;
-
-            if (isChallenger) {
-              freshDuel.challengerScore += 1;
-            } else {
-              freshDuel.opponentScore += 1;
-            }
+            if (isChallenger) challengerScoreDelta = 1;
+            else opponentScoreDelta = 1;
           }
           break;
         }
@@ -735,20 +734,17 @@ export class DuelsService {
         case DuelMode.STEAL: {
           if (isCorrect) {
             scoreAdded = 1;
-
-            if (isChallenger) {
-              freshDuel.challengerScore += 1;
-            } else {
-              freshDuel.opponentScore += 1;
-            }
+            if (isChallenger) challengerScoreDelta = 1;
+            else opponentScoreDelta = 1;
           } else if (!freshDuel.stealOpportunityUserId) {
-            // Give opponent a steal opportunity
             const opponentId = isChallenger ? freshDuel.opponentId : freshDuel.challengerId;
 
             if (opponentId) {
+              nonScoreUpdate.stealOpportunityUserId = opponentId;
+              nonScoreUpdate.stealQuestionId = questionId;
+              stealOpportunity = true;
               freshDuel.stealOpportunityUserId = opponentId;
               freshDuel.stealQuestionId = questionId;
-              stealOpportunity = true;
             }
           }
           break;
@@ -756,7 +752,30 @@ export class DuelsService {
       }
     }
 
-    await this.duelsRepo.save(freshDuel);
+    // Build update set: score columns use raw SQL increment expressions; other state uses direct values
+    const updateSet: Record<string, unknown> = { ...nonScoreUpdate };
+    if (challengerScoreDelta > 0) {
+      updateSet.challengerScore = () => `"challengerScore" + ${challengerScoreDelta}`;
+    }
+    if (opponentScoreDelta > 0) {
+      updateSet.opponentScore = () => `"opponentScore" + ${opponentScoreDelta}`;
+    }
+
+    if (Object.keys(updateSet).length > 0) {
+      await this.duelsRepo
+        .createQueryBuilder()
+        .update(Duel)
+        .set(updateSet as any)
+        .where('id = :id', { id: freshDuel.id })
+        .execute();
+    }
+
+    // Re-fetch to get the authoritative post-update scores (both players' increments applied)
+    const postUpdate = await this.duelsRepo.findOne({ where: { id: freshDuel.id } });
+    if (postUpdate) {
+      freshDuel.challengerScore = postUpdate.challengerScore;
+      freshDuel.opponentScore = postUpdate.opponentScore;
+    }
 
     // ── Sudden Death: defer elimination until both players have answered ────────
     if (freshDuel.mode === DuelMode.SUDDEN_DEATH && !isStealAttempt) {
@@ -973,35 +992,100 @@ export class DuelsService {
     duel: Duel,
     opts: { suddenDeathLoserId?: string | null } = {},
   ): Promise<{ duelComplete: boolean; suddenDeathStarted: boolean }> {
-    const allAnswers = await this.answersRepo.find({
-      where: { duelId: duel.id, isSteal: false },
-    });
+    try {
+      const allAnswers = await this.answersRepo.find({
+        where: { duelId: duel.id, isSteal: false },
+      });
 
-    const resolved = resolveDuel({
-      challengerId: duel.challengerId,
-      opponentId: duel.opponentId!,
-      challengerScore: duel.challengerScore,
-      opponentScore: duel.opponentScore,
-      answers: allAnswers,
-      suddenDeathLoserId: opts.suddenDeathLoserId ?? null,
-    });
+      const resolved = resolveDuel({
+        challengerId: duel.challengerId,
+        opponentId: duel.opponentId!,
+        challengerScore: duel.challengerScore,
+        opponentScore: duel.opponentScore,
+        answers: allAnswers,
+        suddenDeathLoserId: opts.suddenDeathLoserId ?? null,
+      });
 
-    duel.winnerId = resolved.winnerId;
-    duel.resolution = resolved.resolution;
-    duel.tiebreakDeltaMs = resolved.tiebreakDeltaMs;
-    if (resolved.resolution === 'draw') duel.isTie = true;
+      const completedAt = new Date();
 
-    duel.status = DuelStatus.COMPLETED;
-    duel.completedAt = new Date();
+      // Atomic CAS: write COMPLETED + resolution fields only if still in a playable status.
+      // Cast status to text so PostgreSQL doesn't validate $7/$8 against the enum type —
+      // avoids errors if the DB enum definition drifts from the TypeScript enum values.
+      const claimed = await this.duelsRepo.manager.query<{ id: string }[]>(
+        `UPDATE duels
+         SET status = 'completed',
+             "completedAt" = $2,
+             "winnerId" = $3,
+             resolution = $4,
+             "tiebreakDeltaMs" = $5,
+             "isTie" = $6
+         WHERE id = $1
+           AND status::text = ANY(ARRAY[$7, $8])
+         RETURNING id`,
+        [
+          duel.id,
+          completedAt,
+          resolved.winnerId ?? null,
+          resolved.resolution ?? null,
+          resolved.tiebreakDeltaMs ?? null,
+          resolved.resolution === 'draw',
+          DuelStatus.ACTIVE,
+          DuelStatus.SUDDEN_DEATH,
+        ],
+      );
 
-    await this.duelsRepo.save(duel);
-    await this.handleCompletionPrize(duel);
-    await this.progressionService.award(duel);
+      if (!claimed.length) {
+        this.logger.warn(`finalizeWithResolver: duel ${duel.id} already completed, skipping`);
+        return { duelComplete: false, suddenDeathStarted: false };
+      }
 
-    const stats = await this.buildCompletionStats(duel);
-    this.eventEmitter.emit('duel.completed', { duel, ...stats });
+      // Sync in-memory entity so downstream callers see correct state
+      duel.winnerId = resolved.winnerId;
+      duel.resolution = resolved.resolution;
+      duel.tiebreakDeltaMs = resolved.tiebreakDeltaMs;
+      if (resolved.resolution === 'draw') duel.isTie = true;
+      duel.status = DuelStatus.COMPLETED;
+      duel.completedAt = completedAt;
 
-    return { duelComplete: true, suddenDeathStarted: false };
+      await this.handleCompletionPrize(duel);
+      await this.progressionService.award(duel);
+
+      const stats = await this.buildCompletionStats(duel);
+      this.eventEmitter.emit('duel.completed', { duel, ...stats });
+
+      return { duelComplete: true, suddenDeathStarted: false };
+    } catch (err) {
+      // Safety net: no error in resolution logic may leave a duel stuck in a non-terminal state.
+      // Force to completed, then emit DUEL_COMPLETE so both clients can exit the game screen.
+      this.logger.error(
+        `finalizeWithResolver threw for duel ${duel.id}, forcing to completed`,
+        err,
+      );
+
+      await this.duelsRepo.manager
+        .query(
+          `UPDATE duels
+           SET status = 'completed', "completedAt" = NOW()
+           WHERE id = $1 AND status::text != 'completed'`,
+          [duel.id],
+        )
+        .catch((forceErr: unknown) => {
+          this.logger.error(`Force-complete also failed for duel ${duel.id}`, forceErr);
+        });
+
+      duel.status = DuelStatus.COMPLETED;
+      duel.completedAt ??= new Date();
+
+      const stats = await this.buildCompletionStats(duel).catch(() => ({
+        questionSummary: [] as QuestionSummaryItem[],
+        challengerCorrect: 0,
+        opponentCorrect: 0,
+      }));
+
+      this.eventEmitter.emit('duel.completed', { duel, ...stats });
+
+      return { duelComplete: true, suddenDeathStarted: false };
+    }
   }
 
   private async completeDuelLogic(

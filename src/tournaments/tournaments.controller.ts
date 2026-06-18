@@ -28,6 +28,7 @@ import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { TournamentResponseDto } from './dto/tournament-response.dto';
 import { TournamentListItemDto } from './dto/tournament-list-item.dto';
+import { TournamentHistoryItemDto } from './dto/tournament-history-item.dto';
 import { TournamentArena } from './types/tournament-arena.enum';
 import { TournamentStatus } from './types/tournament-status.enum';
 import { GameType } from '../game-sessions/types/game-type.enum';
@@ -84,6 +85,17 @@ export class TournamentsController {
       gameType: query.gameType,
       userId: user.sub,
     });
+  }
+
+  // NOTE: must be declared before @Get(':id') to avoid route shadowing
+  @Get('history')
+  @ApiOperation({ summary: "Get current user's tournament history (paginated)" })
+  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  async getTournamentHistory(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: PaginatedQueryDto,
+  ): Promise<PaginatedResponseDto<TournamentHistoryItemDto>> {
+    return this.tournamentsService.getTournamentHistory(user.sub, query);
   }
 
   @Get(':id')

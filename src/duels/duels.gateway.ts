@@ -39,6 +39,8 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
   private readonly stealTimers = new Map<string, NodeJS.Timeout>();
   // `${duelId}:${userId}` → blitz per-player question timer
   private readonly blitzTimers = new Map<string, NodeJS.Timeout>();
+  // userId → socketId — maintained on connect/disconnect for O(1) per-player lookup
+  private readonly userSocketMap = new Map<string, string>();
 
   constructor(
     private readonly duelsService: DuelsService,
@@ -62,6 +64,7 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     try {
       const payload = this.jwtService.verify<JwtPayload>(token);
       client.data.userId = payload.sub;
+      this.userSocketMap.set(payload.sub, client.id);
       this.logger.log(`WS connected: ${client.id} userId=${payload.sub}`);
     } catch {
       client.disconnect(true);
@@ -72,6 +75,12 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
     const userId = client.data.userId as string | undefined;
 
     if (!userId) return;
+
+    // Only remove if this socket is still the current one for this user.
+    // Guards against a reconnect arriving before the old socket's disconnect fires.
+    if (this.userSocketMap.get(userId) === client.id) {
+      this.userSocketMap.delete(userId);
+    }
 
     for (const [duelId, players] of this.connectedPlayers.entries()) {
       if (!players.has(userId)) continue;
@@ -599,41 +608,54 @@ export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatew
   /**
    * Emit DUEL_COMPLETE to each participant individually so myProgression
    * carries that player's own snapshot, not their opponent's.
-   * Silently skips any player whose socket is not currently connected —
-   * they will receive the snapshot via REST on reconnect.
+   * If per-player lookup throws for any reason, falls back to a room-wide
+   * emit (myProgression: null) so DUEL_COMPLETE always reaches connected players.
    */
   private emitDuelCompletePerPlayer(
     duel: Duel,
     payload: Record<string, unknown>,
   ): void {
-    const challengerSocket = this.findSocketByUserId(duel.challengerId);
-    const opponentSocket = duel.opponentId
-      ? this.findSocketByUserId(duel.opponentId)
-      : undefined;
+    try {
+      const challengerSocket = this.findSocketByUserId(duel.challengerId);
+      const opponentSocket = duel.opponentId
+        ? this.findSocketByUserId(duel.opponentId)
+        : undefined;
 
-    if (challengerSocket) {
-      challengerSocket.emit(DuelEvents.DUEL_COMPLETE, {
-        ...payload,
-        myProgression: duel.challengerProgression ?? null,
-      });
-    }
+      if (challengerSocket) {
+        challengerSocket.emit(DuelEvents.DUEL_COMPLETE, {
+          ...payload,
+          myProgression: duel.challengerProgression ?? null,
+        });
+      }
 
-    if (opponentSocket) {
-      opponentSocket.emit(DuelEvents.DUEL_COMPLETE, {
-        ...payload,
-        myProgression: duel.opponentProgression ?? null,
-      });
+      if (opponentSocket) {
+        opponentSocket.emit(DuelEvents.DUEL_COMPLETE, {
+          ...payload,
+          myProgression: duel.opponentProgression ?? null,
+        });
+      }
+    } catch (err) {
+      this.logger.error(
+        `emitDuelCompletePerPlayer threw for duel ${duel.id}, falling back to room emit`,
+        err,
+      );
+      try {
+        this.server.to(`duel:${duel.id}`).emit(DuelEvents.DUEL_COMPLETE, {
+          ...payload,
+          myProgression: null,
+        });
+      } catch (roomErr) {
+        this.logger.error(`Room emit fallback also failed for duel ${duel.id}`, roomErr);
+      }
     }
   }
 
   private findSocketByUserId(userId: string): Socket | undefined {
-    for (const [, socket] of this.server.sockets.sockets) {
-      if ((socket.data as { userId?: string }).userId === userId) {
-        return socket;
-      }
-    }
-
-    return undefined;
+    const socketId = this.userSocketMap.get(userId);
+    if (!socketId) return undefined;
+    // On a namespaced gateway, @WebSocketServer() injects the Namespace object.
+    // Namespace.sockets is already the Map<socketId, Socket> — there is no .sockets.sockets.
+    return (this.server.sockets as unknown as Map<string, Socket>).get(socketId);
   }
 
   private clearAllTimers(duelId: string): void {

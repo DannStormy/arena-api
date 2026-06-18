@@ -80,7 +80,7 @@ export class DuelsController {
     @CurrentUser() user: JwtPayload,
     @Query() query: DuelHistoryQueryDto,
   ): Promise<PaginatedResponseDto<DuelListItemDto>> {
-    return this.duelsService.getDuelHistory(user.sub, query, query.status);
+    return this.duelsService.getDuelHistory(user.sub, query, query.status ?? DuelStatus.COMPLETED);
   }
 
   // NOTE: declared before param routes to avoid shadowing
