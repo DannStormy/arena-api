@@ -4,11 +4,14 @@ import { Repository } from 'typeorm';
 import { TournamentEntry } from '../tournaments/entities/tournament-entry.entity';
 import { User } from '../users/entities/user.entity';
 import { Duel } from '../duels/entities/duel.entity';
+import { ProgressionProjection } from '../progression/entities/progression-projection.entity';
+import { Ledger } from '../progression/types/ledger.enum';
 import { LeaderboardEntryDto } from './dto/leaderboard-entry.dto';
 import { DuelLeaderboardEntryDto } from './dto/duel-leaderboard-entry.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
-import { rankFromSeasonPoints } from '../common/rank-tiers';
 import { currentSeasonId } from '../duels/duel-progression';
+import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 
 @Injectable()
 export class LeaderboardService {
@@ -21,6 +24,8 @@ export class LeaderboardService {
     private readonly usersRepo: Repository<User>,
     @InjectRepository(Duel)
     private readonly duelsRepo: Repository<Duel>,
+    @InjectRepository(ProgressionProjection)
+    private readonly projectionRepo: Repository<ProgressionProjection>,
   ) {}
 
   async getGlobalLeaderboard(arena?: TournamentArena): Promise<LeaderboardEntryDto[]> {
@@ -70,161 +75,129 @@ export class LeaderboardService {
     });
   }
 
+  /**
+   * Paginated duel-rank leaderboard backed by the progression_projections table.
+   *
+   * Duel rank is a global per-season ledger — there are no per-arena projections.
+   * The `arena` parameter is accepted for API consistency but does NOT filter results;
+   * the FE should hide/disable the arena selector for this board.
+   *
+   * The requesting user's own row is appended to the page data even when they fall
+   * outside the current page, so the FE can always highlight "YOU".
+   */
   async getDuelLeaderboard(
     requestingUserId: string,
-    arena?: TournamentArena,
-  ): Promise<DuelLeaderboardEntryDto[]> {
+    query: PaginatedQueryDto,
+    _arena?: TournamentArena,
+  ): Promise<PaginatedResponseDto<DuelLeaderboardEntryDto>> {
     const seasonId = currentSeasonId();
     const monthStart = new Date(`${seasonId}-01T00:00:00.000Z`);
+    const { page, limit } = query;
+    const offset = (page - 1) * limit;
 
-    let rankedRows: Array<{ userId: string; seasonPoints: number }>;
+    const [projections, total] = await this.projectionRepo.findAndCount({
+      where: { ledger: Ledger.DUEL_RANK, seasonId },
+      order: { total: 'DESC' },
+      skip: offset,
+      take: limit,
+    });
 
-    if (!arena) {
-      // All arenas: rank by user.seasonPoints (already season-aware)
-      const users = await this.usersRepo
-        .createQueryBuilder('u')
-        .select(['u.id', 'u.seasonPoints', 'u.seasonId'])
-        .orderBy('u.seasonPoints', 'DESC')
-        .limit(50)
-        .getMany();
+    const topUserIds = projections.map((p) => p.userId);
 
-      rankedRows = users.map((u) => ({
-        userId: u.id,
-        seasonPoints: u.seasonId === seasonId ? u.seasonPoints : 0,
-      }));
-    } else {
-      // Arena-specific: aggregate SP awarded in duels for this arena during current month
-      const raw = await this.duelsRepo.manager.query<{ userId: string; arenaPoints: string }[]>(
-        `
-        SELECT t."userId", COALESCE(SUM(t.sp), 0)::int AS "arenaPoints"
-        FROM (
-          SELECT d."challengerId" AS "userId", d."challengerSpAwarded" AS sp
-          FROM duels d
-          WHERE d.arena = $1
-            AND d."progressionAwarded" = true
-            AND d."completedAt" >= $2
-            AND d."challengerSpAwarded" IS NOT NULL
-          UNION ALL
-          SELECT d."opponentId" AS "userId", d."opponentSpAwarded" AS sp
-          FROM duels d
-          WHERE d.arena = $1
-            AND d."progressionAwarded" = true
-            AND d."completedAt" >= $2
-            AND d."opponentSpAwarded" IS NOT NULL
-            AND d."opponentId" IS NOT NULL
-        ) t
-        GROUP BY t."userId"
-        ORDER BY "arenaPoints" DESC
-        LIMIT 50
-        `,
-        [arena, monthStart],
-      );
-
-      rankedRows = raw.map((r) => ({ userId: r.userId, seasonPoints: Number(r.arenaPoints) }));
-    }
-
-    // Load user details
-    const topUserIds = rankedRows.map((r) => r.userId);
-    const topUsers =
+    const [topUsers, gamesPlayedMap] = await Promise.all([
       topUserIds.length > 0
-        ? await this.usersRepo.createQueryBuilder('u').whereInIds(topUserIds).getMany()
-        : [];
+        ? this.usersRepo.createQueryBuilder('u').whereInIds(topUserIds).getMany()
+        : Promise.resolve([]),
+      this.getGamesPlayedForUsers(topUserIds, monthStart),
+    ]);
+
     const userMap = new Map(topUsers.map((u) => [u.id, u]));
 
-    const entries: DuelLeaderboardEntryDto[] = rankedRows.map((row, idx) => {
-      const user = userMap.get(row.userId);
+    const entries: DuelLeaderboardEntryDto[] = projections.map((proj, idx) => {
+      const user = userMap.get(proj.userId);
       const dto = new DuelLeaderboardEntryDto();
-      dto.rank = idx + 1;
-      dto.userId = row.userId;
+      dto.rank = offset + idx + 1;
+      dto.userId = proj.userId;
       dto.username = user?.username ?? '';
       dto.avatarInitials = computeInitials(user?.username ?? '');
       dto.avatarUrl = user?.avatarUrl ?? null;
-      dto.seasonPoints = row.seasonPoints;
-      dto.rankTier = rankFromSeasonPoints(row.seasonPoints).rank;
-      dto.isRequestingUser = row.userId === requestingUserId;
+      dto.rankPoints = proj.total;
+      dto.tier = proj.tier ?? 'Spectator';
+      dto.gamesPlayed = gamesPlayedMap.get(proj.userId) ?? 0;
+      dto.isRequestingUser = proj.userId === requestingUserId;
       return dto;
     });
 
-    // Always include requesting user if outside the top list
-    const inTop = entries.some((e) => e.userId === requestingUserId);
+    const inPage = entries.some((e) => e.userId === requestingUserId);
 
-    if (!inTop) {
-      const requestingUser = await this.usersRepo.findOne({ where: { id: requestingUserId } });
+    if (!inPage) {
+      const myProj = await this.projectionRepo.findOne({
+        where: { userId: requestingUserId, ledger: Ledger.DUEL_RANK, seasonId },
+      });
 
-      if (requestingUser) {
-        let userPoints = 0;
+      if (myProj) {
+        const higherRow = await this.projectionRepo
+          .createQueryBuilder('p')
+          .select('COUNT(*)', 'count')
+          .where('p.ledger = :ledger', { ledger: Ledger.DUEL_RANK })
+          .andWhere('p.seasonId = :seasonId', { seasonId })
+          .andWhere('p.total > :total', { total: myProj.total })
+          .getRawOne<{ count: string }>();
 
-        if (!arena) {
-          userPoints =
-            requestingUser.seasonId === seasonId ? requestingUser.seasonPoints : 0;
-        } else {
-          const [arenaRow] = await this.duelsRepo.manager.query<{ arenaPoints: string }[]>(
-            `
-            SELECT COALESCE(SUM(t.sp), 0)::int AS "arenaPoints"
-            FROM (
-              SELECT d."challengerSpAwarded" AS sp
-              FROM duels d
-              WHERE d."challengerId" = $1 AND d.arena = $2
-                AND d."progressionAwarded" = true AND d."completedAt" >= $3
-                AND d."challengerSpAwarded" IS NOT NULL
-              UNION ALL
-              SELECT d."opponentSpAwarded" AS sp
-              FROM duels d
-              WHERE d."opponentId" = $1 AND d.arena = $2
-                AND d."progressionAwarded" = true AND d."completedAt" >= $3
-                AND d."opponentSpAwarded" IS NOT NULL
-            ) t
-            `,
-            [requestingUserId, arena, monthStart],
-          );
-          userPoints = Number(arenaRow?.arenaPoints ?? 0);
-        }
+        const actualRank = Number(higherRow?.count ?? 0) + 1;
 
-        // Compute actual rank
-        let actualRank: number;
-        if (!arena) {
-          const [{ count }] = await this.usersRepo.manager.query<[{ count: string }]>(
-            `SELECT COUNT(*)::int as count FROM users WHERE "seasonPoints" > $1 AND "seasonId" = $2`,
-            [userPoints, seasonId],
-          );
-          actualRank = Number(count) + 1;
-        } else {
-          const [{ count }] = await this.duelsRepo.manager.query<[{ count: string }]>(
-            `
-            SELECT COUNT(DISTINCT t."userId")::int as count
-            FROM (
-              SELECT d."challengerId" AS "userId", COALESCE(SUM(d."challengerSpAwarded"), 0) AS sp
-              FROM duels d
-              WHERE d.arena = $1 AND d."progressionAwarded" = true AND d."completedAt" >= $2 AND d."challengerSpAwarded" IS NOT NULL
-              GROUP BY d."challengerId"
-              UNION ALL
-              SELECT d."opponentId" AS "userId", COALESCE(SUM(d."opponentSpAwarded"), 0) AS sp
-              FROM duels d
-              WHERE d.arena = $1 AND d."progressionAwarded" = true AND d."completedAt" >= $2 AND d."opponentSpAwarded" IS NOT NULL AND d."opponentId" IS NOT NULL
-              GROUP BY d."opponentId"
-            ) t
-            WHERE t.sp > $3
-            `,
-            [arena, monthStart, userPoints],
-          );
-          actualRank = Number(count) + 1;
-        }
+        const [requestingUser, myGamesPlayed] = await Promise.all([
+          this.usersRepo.findOne({ where: { id: requestingUserId } }),
+          this.getGamesPlayedForUsers([requestingUserId], monthStart),
+        ]);
 
         const selfDto = new DuelLeaderboardEntryDto();
         selfDto.rank = actualRank;
-        selfDto.userId = requestingUser.id;
-        selfDto.username = requestingUser.username;
-        selfDto.avatarInitials = computeInitials(requestingUser.username);
-        selfDto.avatarUrl = requestingUser.avatarUrl ?? null;
-        selfDto.seasonPoints = userPoints;
-        selfDto.rankTier = rankFromSeasonPoints(userPoints).rank;
+        selfDto.userId = requestingUserId;
+        selfDto.username = requestingUser?.username ?? '';
+        selfDto.avatarInitials = computeInitials(requestingUser?.username ?? '');
+        selfDto.avatarUrl = requestingUser?.avatarUrl ?? null;
+        selfDto.rankPoints = myProj.total;
+        selfDto.tier = myProj.tier ?? 'Spectator';
+        selfDto.gamesPlayed = myGamesPlayed.get(requestingUserId) ?? 0;
         selfDto.isRequestingUser = true;
 
         entries.push(selfDto);
       }
     }
 
-    return entries;
+    return new PaginatedResponseDto(entries, total, page, limit);
+  }
+
+  private async getGamesPlayedForUsers(
+    userIds: string[],
+    monthStart: Date,
+  ): Promise<Map<string, number>> {
+    if (!userIds.length) return new Map();
+
+    const rows = await this.duelsRepo.manager.query<{ userId: string; count: string }[]>(
+      `
+      SELECT t."userId", COUNT(*)::int AS count
+      FROM (
+        SELECT "challengerId" AS "userId"
+        FROM duels
+        WHERE "challengerId" = ANY($1)
+          AND status = 'completed'
+          AND "completedAt" >= $2
+        UNION ALL
+        SELECT "opponentId" AS "userId"
+        FROM duels
+        WHERE "opponentId" = ANY($1)
+          AND status = 'completed'
+          AND "completedAt" >= $2
+          AND "opponentId" IS NOT NULL
+      ) t
+      GROUP BY t."userId"
+      `,
+      [userIds, monthStart],
+    );
+
+    return new Map(rows.map((r) => [r.userId, Number(r.count)]));
   }
 }
 

@@ -17,10 +17,13 @@ export class DuelLeaderboardEntryDto {
   avatarUrl: string | null;
 
   @ApiProperty()
-  seasonPoints: number;
+  rankPoints: number;
 
   @ApiProperty()
-  rankTier: string;
+  tier: string;
+
+  @ApiProperty()
+  gamesPlayed: number;
 
   @ApiProperty()
   isRequestingUser: boolean;

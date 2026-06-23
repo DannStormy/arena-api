@@ -115,6 +115,9 @@ export class DuelResponseDto {
   @ApiPropertyOptional()
   myProgression: ProgressionSnapshot | null;
 
+  @ApiPropertyOptional()
+  opponentProgression: { tier: string; rankPoints: number } | null;
+
   static fromEntity(
     duel: Duel,
     opts: {
@@ -171,13 +174,23 @@ export class DuelResponseDto {
     if (opts.requestingUserId) {
       if (opts.requestingUserId === duel.challengerId) {
         dto.myProgression = duel.challengerProgression ?? null;
+        const opSnap = duel.opponentProgression;
+        dto.opponentProgression = opSnap
+          ? { tier: opSnap.rankAfter, rankPoints: opSnap.spAfter }
+          : null;
       } else if (opts.requestingUserId === duel.opponentId) {
         dto.myProgression = duel.opponentProgression ?? null;
+        const opSnap = duel.challengerProgression;
+        dto.opponentProgression = opSnap
+          ? { tier: opSnap.rankAfter, rankPoints: opSnap.spAfter }
+          : null;
       } else {
         dto.myProgression = null;
+        dto.opponentProgression = null;
       }
     } else {
       dto.myProgression = null;
+      dto.opponentProgression = null;
     }
 
     return dto;

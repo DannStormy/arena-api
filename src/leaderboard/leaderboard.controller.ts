@@ -9,9 +9,18 @@ import { LeaderboardEntryDto } from './dto/leaderboard-entry.dto';
 import { DuelLeaderboardEntryDto } from './dto/duel-leaderboard-entry.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
+import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 
 class LeaderboardQueryDto {
   @ApiPropertyOptional({ enum: TournamentArena })
+  @IsOptional()
+  @IsEnum(TournamentArena)
+  arena?: TournamentArena;
+}
+
+class DuelLeaderboardQueryDto extends PaginatedQueryDto {
+  @ApiPropertyOptional({ enum: TournamentArena, description: 'Accepted but ignored — duel rank is a global per-season ledger' })
   @IsOptional()
   @IsEnum(TournamentArena)
   arena?: TournamentArena;
@@ -33,13 +42,17 @@ export class LeaderboardController {
   }
 
   @Get('duels')
-  @ApiOperation({ summary: 'Duel leaderboard ranked by season points; arena filter for monthly per-arena SP' })
+  @ApiOperation({
+    summary: 'Duel-rank leaderboard ranked by seasonal rank points (progression_projections). ' +
+      'Arena filter accepted but ignored — duel rank is global per season. ' +
+      "Requesting user's own row is appended to `data` if outside the current page.",
+  })
   @ApiQuery({ name: 'arena', enum: TournamentArena, required: false })
-  @ApiResponse({ status: 200, type: [DuelLeaderboardEntryDto] })
+  @ApiResponse({ status: 200, type: PaginatedResponseDto })
   async getDuelLeaderboard(
     @CurrentUser() user: JwtPayload,
-    @Query() query: LeaderboardQueryDto,
-  ): Promise<DuelLeaderboardEntryDto[]> {
-    return this.leaderboardService.getDuelLeaderboard(user.sub, query.arena);
+    @Query() query: DuelLeaderboardQueryDto,
+  ): Promise<PaginatedResponseDto<DuelLeaderboardEntryDto>> {
+    return this.leaderboardService.getDuelLeaderboard(user.sub, query, query.arena);
   }
 }
