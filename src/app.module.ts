@@ -1,3 +1,4 @@
+import { join } from 'path';
 import { APP_FILTER } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -33,6 +34,11 @@ import { ProgressionModule } from './progression/progression.module';
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
         synchronize: config.get('NODE_ENV') !== 'production',
+        // Migrations are registered so the app is aware of them, but
+        // migrationsRun is intentionally NOT enabled yet — the release/run
+        // strategy is decided and wired in Stage 3. The glob resolves relative
+        // to this module's location (dist in prod, src under ts-node).
+        migrations: [join(__dirname, 'database', 'migrations', '*{.ts,.js}')],
         ssl: config.get('DB_SSL') === 'true' ? { rejectUnauthorized: false } : false,
       }),
     }),
