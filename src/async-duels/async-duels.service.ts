@@ -8,7 +8,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
+import { User } from '../users/entities/user.entity';
 import { ChallengeService } from '../challenges/challenge.service';
 import { ChallengeMode } from '../challenges/types/challenge-mode.enum';
 import { ProgressionAwardService } from '../progression/services/progression-award.service';
@@ -41,11 +42,24 @@ export class AsyncDuelsService {
     private readonly duelsRepo: Repository<AsyncDuel>,
     @InjectRepository(AsyncDuelAnswer)
     private readonly answersRepo: Repository<AsyncDuelAnswer>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
     private readonly challengeService: ChallengeService,
     private readonly progressionAwardService: ProgressionAwardService,
     private readonly progressionConfigService: ProgressionConfigService,
     private readonly streakService: StreakService,
   ) {}
+
+  /** Map the match's participant ids to usernames (for results / share cards). */
+  private async resolveUsernames(duel: AsyncDuel): Promise<Record<string, string>> {
+    const ids = [duel.creatorId, duel.opponentId].filter((id): id is string => id != null);
+    if (ids.length === 0) return {};
+    const users = await this.usersRepo.find({
+      where: { id: In(ids) },
+      select: { id: true, username: true },
+    });
+    return Object.fromEntries(users.map((u) => [u.id, u.username]));
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -265,7 +279,7 @@ export class AsyncDuelsService {
       await this.resolveAndAward(duel);
     }
 
-    return AsyncDuelResultDto.fromEntity(duel);
+    return AsyncDuelResultDto.fromEntity(duel, await this.resolveUsernames(duel));
   }
 
   private bothSidesComplete(duel: AsyncDuel): boolean {
@@ -431,6 +445,6 @@ export class AsyncDuelsService {
       throw new BadRequestException('You are not a participant in this match');
     }
 
-    return AsyncDuelResultDto.fromEntity(duel);
+    return AsyncDuelResultDto.fromEntity(duel, await this.resolveUsernames(duel));
   }
 }
