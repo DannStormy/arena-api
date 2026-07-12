@@ -14,7 +14,7 @@ import { TournamentEntry } from '../../tournaments/entities/tournament-entry.ent
 import { GameSession } from '../../game-sessions/entities/game-session.entity';
 import { User } from '../../users/entities/user.entity';
 import { rankFromSeasonPoints } from '../../common/rank-tiers';
-import { currentSeasonId } from '../../duels/duel-progression';
+import { currentSeasonId, awardFor } from '../../duels/duel-progression';
 
 // Returned to DuelProgressionService for ProgressionSnapshot building
 export interface PlayerAwardPayload {
@@ -182,6 +182,117 @@ export class ProgressionAwardService {
         cumulative,
       ),
     };
+  }
+
+  // ── Async duel award ───────────────────────────────────────────────────────
+
+  /**
+   * Award XP + season points for a completed ASYNC duel. Free-to-play, so the
+   * outcome is fed through the SAME award math as a live duel (`awardFor` for SP,
+   * the same cfg XP fields, the same progression_events ledger + projection
+   * update, and the same `buildPlayerPayload` snapshot builder) — nothing here
+   * duplicates the calculation and the live-duel path is untouched.
+   *
+   * Only the players in `sides` are awarded. For a challenge-link match that's
+   * both real players; for a ghost match it's only the live player (the ghost's
+   * original run is never re-awarded).
+   *
+   * Events are written with sourceType='async_duel' so they never collide with a
+   * live duel of the same id, and the ON CONFLICT clause keeps this idempotent.
+   */
+  async awardAsyncDuelResult(params: {
+    asyncDuelId: string;
+    resolution: DuelResolution;
+    winnerId: string | null;
+    completedAt: Date;
+    sides: { userId: string }[];
+  }): Promise<Record<string, PlayerAwardPayload>> {
+    const { asyncDuelId, resolution, winnerId, completedAt, sides } = params;
+    const { values: cfg, versionId } = await this.configService.getEffective(completedAt);
+    const seasonId = currentSeasonId();
+    const cumulative = buildCumulative(cfg.levelBase, cfg.levelGrowth, cfg.maxLevel);
+
+    const result: Record<string, PlayerAwardPayload> = {};
+
+    for (const side of sides) {
+      const { userId } = side;
+      const isWinner = winnerId === userId;
+
+      // Capture pre-award projections.
+      const [levelBefore, rankBefore] = await Promise.all([
+        this.projectionService.getOrInit(userId, Ledger.LEVEL, null),
+        this.projectionService.getOrInit(userId, Ledger.DUEL_RANK, seasonId),
+      ]);
+
+      const firstToday = await this.isFirstAsyncDuelToday(userId, asyncDuelId);
+      const dayBonus = firstToday ? cfg.firstDuelOfDayBonusXp : 0;
+
+      const xp = this.computeAsyncDuelXp(resolution, isWinner, cfg) + dayBonus;
+
+      // SP via the shared free-duel award math. Async duels are always free and
+      // have no streak/soft-cap tracking, so those inputs are neutral.
+      const { seasonPoints: sp } = awardFor({
+        isWinner,
+        resolution,
+        forfeited: false,
+        staked: false,
+        consecutiveWinsAfterThis: 0,
+        freeWinsToday: 0,
+      });
+
+      const reason =
+        resolution === 'draw'
+          ? EventReason.DUEL_DRAW
+          : isWinner
+            ? EventReason.DUEL_WIN
+            : EventReason.DUEL_LOSS;
+
+      await this.eventsRepo.manager.query(
+        `INSERT INTO progression_events
+           (id, "userId", ledger, points, reason, "sourceType", "sourceId", "seasonId", "configVersionId", "createdAt")
+         VALUES
+           (gen_random_uuid(), $1, 'level',     $2, $4, 'async_duel', $5, NULL,      $7, NOW()),
+           (gen_random_uuid(), $1, 'duel_rank', $3, $4, 'async_duel', $5, $6,        $7, NOW())
+         ON CONFLICT ("userId", ledger, "sourceType", "sourceId", reason) DO NOTHING`,
+        [userId, xp, sp, reason, asyncDuelId, seasonId, versionId],
+      );
+
+      const [levelAfter, rankAfter] = await Promise.all([
+        this.projectionService.updateForUser(userId, Ledger.LEVEL, null, cfg),
+        this.projectionService.updateForUser(userId, Ledger.DUEL_RANK, seasonId, cfg),
+      ]);
+
+      result[userId] = this.buildPlayerPayload(
+        userId, xp, sp, dayBonus,
+        levelBefore, levelAfter,
+        rankBefore, rankAfter,
+        cumulative,
+      );
+    }
+
+    return result;
+  }
+
+  private computeAsyncDuelXp(
+    resolution: DuelResolution,
+    isWinner: boolean,
+    cfg: ProgressionConfigValues,
+  ): number {
+    if (resolution === 'draw') return cfg.xpDraw;
+    return isWinner ? cfg.xpWin : cfg.xpLoss;
+  }
+
+  private async isFirstAsyncDuelToday(userId: string, asyncDuelId: string): Promise<boolean> {
+    const todayStart = startOfUtcDay();
+    const count = await this.eventsRepo
+      .createQueryBuilder('e')
+      .where('e.userId = :uid', { uid: userId })
+      .andWhere("e.sourceType = 'async_duel'")
+      .andWhere('e.ledger = :ledger', { ledger: Ledger.LEVEL })
+      .andWhere('e.createdAt >= :start', { start: todayStart })
+      .andWhere('e.sourceId != :sid', { sid: asyncDuelId })
+      .getCount();
+    return count === 0;
   }
 
   // ── Tournament award ───────────────────────────────────────────────────────

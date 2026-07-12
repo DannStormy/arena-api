@@ -16,6 +16,8 @@ import { PaystackModule } from './services/paystack/paystack.module';
 import { AdminModule } from './admin/admin.module';
 import { DuelsModule } from './duels/duels.module';
 import { ProgressionModule } from './progression/progression.module';
+import { ChallengeModule } from './challenges/challenge.module';
+import { AsyncDuelsModule } from './async-duels/async-duels.module';
 
 @Module({
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
@@ -53,6 +55,8 @@ import { ProgressionModule } from './progression/progression.module';
     AdminModule,
     DuelsModule,
     ProgressionModule,
+    ChallengeModule,
+    AsyncDuelsModule,
   ],
 })
 export class AppModule {}
