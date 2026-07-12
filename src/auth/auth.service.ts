@@ -26,8 +26,11 @@ export class AuthService {
     private readonly dataSource: DataSource,
   ) {}
 
-  async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.usersService.findByEmail(email);
+  /** `identifier` may be either an email or a username. */
+  async validateUser(identifier: string, password: string): Promise<User | null> {
+    const user =
+      (await this.usersService.findByEmail(identifier)) ??
+      (await this.usersService.findByUsername(identifier));
 
     if (!user) {
       return null;

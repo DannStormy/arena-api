@@ -21,12 +21,12 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Login with email and password' })
+  @ApiOperation({ summary: 'Login with username or email + password' })
   @ApiBody({ type: LoginDto })
   @ApiResponse({ status: 200, type: AuthResponseDto })
   @ApiResponse({ status: 401, description: 'Invalid credentials' })
   async login(@Body() dto: LoginDto): Promise<AuthResponseDto> {
-    const user = await this.authService.validateUser(dto.email, dto.password);
+    const user = await this.authService.validateUser(dto.identifier, dto.password);
 
     if (!user) {
       const { UnauthorizedException } = await import('@nestjs/common');
