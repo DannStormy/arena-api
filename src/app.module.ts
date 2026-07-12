@@ -17,6 +17,7 @@ import { AdminModule } from './admin/admin.module';
 import { DuelsModule } from './duels/duels.module';
 import { ProgressionModule } from './progression/progression.module';
 import { ChallengeModule } from './challenges/challenge.module';
+import { StreakModule } from './streak/streak.module';
 import { AsyncDuelsModule } from './async-duels/async-duels.module';
 
 @Module({
@@ -57,6 +58,7 @@ import { AsyncDuelsModule } from './async-duels/async-duels.module';
     ProgressionModule,
     ChallengeModule,
     AsyncDuelsModule,
+    StreakModule,
   ],
 })
 export class AppModule {}

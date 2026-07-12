@@ -66,6 +66,17 @@ export class User {
   @Column({ type: 'int', default: 0 })
   duelWinStreak: number;
 
+  // Daily-play streak (the "don't break the chain" retention hook) — distinct
+  // from duelWinStreak (consecutive wins). Bumped on any play; dates are UTC.
+  @Column({ type: 'int', default: 0 })
+  currentDailyStreak: number;
+
+  @Column({ type: 'int', default: 0 })
+  longestDailyStreak: number;
+
+  @Column({ type: 'date', nullable: true })
+  lastPlayedOn: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   allTimeHighestRank: string | null;
 

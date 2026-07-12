@@ -9,6 +9,7 @@ import { ChallengeService } from '../challenges/challenge.service';
 import { ChallengeMode } from '../challenges/types/challenge-mode.enum';
 import { ProgressionAwardService } from '../progression/services/progression-award.service';
 import { ProgressionConfigService } from '../progression/services/progression-config.service';
+import { StreakService } from '../streak/streak.service';
 import { MIN_PLAUSIBLE_ELAPSED_MS } from './async-duel-resolver';
 
 /** Minimal in-memory stand-in for the answers repo. */
@@ -97,12 +98,14 @@ describe('AsyncDuelsService', () => {
   });
 
   function build(duelsRepo: any, answersRepo: any) {
+    const streak = { recordActivity: jest.fn(async () => ({})) };
     return new AsyncDuelsService(
       duelsRepo as unknown as Repository<AsyncDuel>,
       answersRepo as unknown as Repository<AsyncDuelAnswer>,
       challengeService,
       award as unknown as ProgressionAwardService,
       config as unknown as ProgressionConfigService,
+      streak as unknown as StreakService,
     );
   }
 

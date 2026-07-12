@@ -13,6 +13,7 @@ import { ChallengeService } from '../challenges/challenge.service';
 import { ChallengeMode } from '../challenges/types/challenge-mode.enum';
 import { ProgressionAwardService } from '../progression/services/progression-award.service';
 import { ProgressionConfigService } from '../progression/services/progression-config.service';
+import { StreakService } from '../streak/streak.service';
 import { AsyncDuel } from './entities/async-duel.entity';
 import { AsyncDuelAnswer } from './entities/async-duel-answer.entity';
 import { AsyncDuelMatchType } from './types/async-duel-match-type.enum';
@@ -43,6 +44,7 @@ export class AsyncDuelsService {
     private readonly challengeService: ChallengeService,
     private readonly progressionAwardService: ProgressionAwardService,
     private readonly progressionConfigService: ProgressionConfigService,
+    private readonly streakService: StreakService,
   ) {}
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -250,6 +252,12 @@ export class AsyncDuelsService {
     }
 
     await this.duelsRepo.save(duel);
+
+    // Submitting a run counts toward the daily streak. Fire-and-forget so a
+    // streak hiccup never blocks match resolution; the UI reads GET /streak.
+    void this.streakService
+      .recordActivity(userId)
+      .catch((err) => this.logger.warn(`streak recordActivity failed: ${err}`));
 
     // Resolve + award when BOTH sides are done. For ghost matches the opponent
     // (ghost) side is prefilled, so the creator's submission completes it.
