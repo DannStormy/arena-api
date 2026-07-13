@@ -12,7 +12,10 @@ services:
     plan: free
     region: frankfurt # closest Render region to Lagos
     branch: feat/mvp-speed-math-async-duels
-    buildCommand: yarn install --frozen-lockfile && yarn build
+    # --production=false forces devDependencies (nest CLI, typescript) to install
+    # even though NODE_ENV=production, so `nest build` can run. Runtime (node
+    # dist/main) only needs the compiled output, so it stays lean regardless.
+    buildCommand: yarn install --frozen-lockfile --production=false && yarn build
     startCommand: node dist/main
     healthCheckPath: /docs
     envVars:
