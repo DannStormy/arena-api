@@ -1,0 +1,45 @@
+# Render Blueprint — Arena API (NestJS backend + duel websocket).
+# In Render: New → Blueprint → connect this repo (branch below). Then fill the
+# `sync: false` secrets in the dashboard. Postgres lives on Neon (free) — its
+# connection parts go into the DB_* vars.
+#
+# Free web services sleep after ~15 min idle → first request cold-starts (~50s).
+# Fine for a demo; upgrade the plan to keep it warm.
+services:
+  - type: web
+    name: arena-api
+    runtime: node
+    plan: free
+    region: frankfurt # closest Render region to Lagos
+    branch: feat/mvp-speed-math-async-duels
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    startCommand: node dist/main
+    healthCheckPath: /docs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # First boot builds the schema from entities (no migration run needed).
+      # Flip to false once the schema exists (or after a pg_dump restore).
+      - key: DB_SYNCHRONIZE
+        value: "true"
+      - key: DB_SSL
+        value: "true" # Neon requires SSL
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong secret
+      # --- set these in the dashboard (from your Neon connection string) ---
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      # = the deployed frontend origin (Step 3 in DEPLOY.md)
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # PORT is injected by Render automatically — the app reads process.env.PORT.

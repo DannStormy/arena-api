@@ -36,7 +36,11 @@ import { AsyncDuelsModule } from './async-duels/async-duels.module';
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
-        synchronize: config.get('NODE_ENV') !== 'production',
+        // Prod defaults to false (migrations own the schema). DB_SYNCHRONIZE=true
+        // is an explicit escape hatch so a fresh cloud DB can build its schema
+        // from entities on first boot (demo/bring-up) without a migration run.
+        synchronize:
+          config.get('DB_SYNCHRONIZE') === 'true' || config.get('NODE_ENV') !== 'production',
         // Migrations are registered so the app is aware of them, but
         // migrationsRun is intentionally NOT enabled yet — the release/run
         // strategy is decided and wired in Stage 3. The glob resolves relative
