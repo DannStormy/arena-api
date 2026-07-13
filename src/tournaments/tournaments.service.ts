@@ -43,7 +43,8 @@ export class TournamentsService {
   async create(createdBy: string, dto: CreateTournamentDto): Promise<TournamentResponseDto> {
     const tournament = this.tournamentsRepo.create({
       ...dto,
-      entryFee: dto.entryFee?.toFixed(2),
+      // Free entry: tournaments are sponsor-funded, no entry fee is ever charged.
+      entryFee: '0',
       prizeFirst: dto.prizeFirst.toFixed(2),
       prizeSecond: dto.prizeSecond?.toFixed(2),
       prizeThird: dto.prizeThird?.toFixed(2),
@@ -187,20 +188,11 @@ export class TournamentsService {
       throw new BadRequestException('Already registered for this tournament');
     }
 
-    const wallet = await this.walletService.findByUserId(userId);
-    const entryFee = parseFloat(tournament.entryFee);
-
-    if (entryFee > 0) {
-      await this.walletService.debit(wallet.id, entryFee, TransactionType.ENTRY_FEE, {
-        reference: `entry:${tournamentId}:${userId}`,
-        description: `Entry fee for tournament: ${tournament.title}`,
-      });
-    }
-
+    // Free entry: no wallet debit on join.
     const entry = this.entriesRepo.create({
       tournamentId,
       userId,
-      entryFeePaid: tournament.entryFee,
+      entryFeePaid: '0',
     });
 
     const saved = await this.entriesRepo.save(entry);

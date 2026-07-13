@@ -26,12 +26,6 @@ export class CreateTournamentDto {
   @IsEnum(GameType)
   gameType: GameType;
 
-  @ApiPropertyOptional({ default: 0 })
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  entryFee?: number;
-
   @ApiProperty()
   @IsNumber()
   @Min(0)

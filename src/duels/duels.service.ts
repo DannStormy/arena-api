@@ -21,7 +21,6 @@ import { DuelListItemDto } from './dto/duel-list-item.dto';
 import { QuestionsService } from '../questions/questions.service';
 import { QuestionResponseDto } from '../questions/dto/question-response.dto';
 import { WalletService } from '../wallet/wallet.service';
-import { TransactionType } from '../wallet/types/transaction-type.enum';
 import { DuelConfigService } from './duel-config.service';
 import { resolveDuel } from './duel-resolver';
 import { DuelProgressionService } from './duel-progression.service';
@@ -225,21 +224,7 @@ export class DuelsService {
   async createDuel(userId: string, dto: CreateDuelDto): Promise<DuelResponseDto> {
     const config = await this.duelConfigService.getConfig();
 
-    if (!config.stakeTiers.includes(dto.stake)) {
-      throw new BadRequestException(
-        `Invalid stake amount. Allowed tiers: ${config.stakeTiers.join(', ')}`,
-      );
-    }
-
-    if (dto.stake > 0) {
-      const wallet = await this.walletService.findByUserId(userId);
-      const balance = await this.walletService.getBalance(wallet.id);
-
-      if (parseFloat(balance) < dto.stake) {
-        throw new BadRequestException('Insufficient balance');
-      }
-    }
-
+    // Free-to-play: duels are always free (no stake, no wallet debit).
     const questionCount = dto.mode === DuelMode.BLITZ ? BLITZ_QUESTION_COUNT : config.questionsPerDuel;
     const questions = await this.questionsService.selectQuestionsForSession(
       userId,
@@ -258,7 +243,7 @@ export class DuelsService {
       code,
       mode: dto.mode,
       arena: dto.arena,
-      stake: dto.stake.toFixed(2),
+      stake: '0',
       challengerId: userId,
       questionIds: questions.map((q) => q.id),
       expiresAt,
@@ -293,26 +278,7 @@ export class DuelsService {
       throw new BadRequestException('Duel has expired');
     }
 
-    const stake = parseFloat(duel.stake);
-
-    if (stake > 0) {
-      const [cWallet, oWallet] = await Promise.all([
-        this.walletService.findByUserId(duel.challengerId),
-        this.walletService.findByUserId(userId),
-      ]);
-
-      await Promise.all([
-        this.walletService.debit(cWallet.id, stake, TransactionType.ENTRY_FEE, {
-          description: `Duel stake: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-        this.walletService.debit(oWallet.id, stake, TransactionType.ENTRY_FEE, {
-          description: `Duel stake: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-      ]);
-    }
-
+    // Free-to-play: no stake, no wallet debit on accept.
     duel.opponentId = userId;
     duel.status = DuelStatus.ACTIVE;
     duel.startedAt = new Date();
@@ -327,14 +293,7 @@ export class DuelsService {
   }
 
   async matchmakeDuel(userId: string, dto: MatchmakeDuelDto): Promise<DuelResponseDto> {
-    const config = await this.duelConfigService.getConfig();
-
-    if (!config.stakeTiers.includes(dto.stake)) {
-      throw new BadRequestException(
-        `Invalid stake amount. Allowed tiers: ${config.stakeTiers.join(', ')}`,
-      );
-    }
-
+    // Free-to-play: matchmaking no longer filters by stake (everyone is at 0).
     const bracket = await this.getUserSkillBracket(userId);
     const { min, max } = this.bracketScoreBounds(bracket);
 
@@ -352,7 +311,6 @@ export class DuelsService {
       )
       .where('d.mode = :mode', { mode: dto.mode })
       .andWhere('d.arena = :arena', { arena: dto.arena })
-      .andWhere('d.stake = :stake', { stake: dto.stake.toFixed(2) })
       .andWhere('d.status = :status', { status: DuelStatus.PENDING })
       .andWhere('(d.expiresAt IS NULL OR d.expiresAt > NOW())')
       .andWhere('d.challengerId != :userId', { userId })
@@ -375,26 +333,7 @@ export class DuelsService {
       throw new BadRequestException('Duel no longer available');
     }
 
-    const stake = parseFloat(duel.stake);
-
-    if (stake > 0) {
-      const [cWallet, oWallet] = await Promise.all([
-        this.walletService.findByUserId(duel.challengerId),
-        this.walletService.findByUserId(userId),
-      ]);
-
-      await Promise.all([
-        this.walletService.debit(cWallet.id, stake, TransactionType.ENTRY_FEE, {
-          description: `Duel stake: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-        this.walletService.debit(oWallet.id, stake, TransactionType.ENTRY_FEE, {
-          description: `Duel stake: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-      ]);
-    }
-
+    // Free-to-play: no stake, no wallet debit on match.
     duel.opponentId = userId;
     duel.status = DuelStatus.ACTIVE;
     duel.startedAt = new Date();
@@ -521,27 +460,8 @@ export class DuelsService {
 
     await this.duelsRepo.save(duel);
 
-    const stake = parseFloat(duel.stake);
-
-    if (stake > 0 && duel.opponentId) {
-      const [cWallet, oWallet] = await Promise.all([
-        this.walletService.findByUserId(duel.challengerId),
-        this.walletService.findByUserId(duel.opponentId),
-      ]);
-
-      await Promise.all([
-        this.walletService.credit(cWallet.id, stake, TransactionType.REFUND, {
-          description: `Early disconnect refund: duel ${duelId}`,
-          extra: { duelId, reason: 'early_disconnect' },
-        }),
-        this.walletService.credit(oWallet.id, stake, TransactionType.REFUND, {
-          description: `Early disconnect refund: duel ${duelId}`,
-          extra: { duelId, reason: 'early_disconnect' },
-        }),
-      ]);
-    }
-
-    this.logger.log(`Duel cancelled (early disconnect, stakes refunded): ${duelId}`);
+    // Free-to-play: no stake, no refund needed on early disconnect.
+    this.logger.log(`Duel cancelled (early disconnect): ${duelId}`);
   }
 
   async forfeit(duelId: string, forfeitingUserId: string): Promise<void> {
@@ -564,18 +484,7 @@ export class DuelsService {
 
     await this.duelsRepo.save(duel);
 
-    const stake = parseFloat(duel.stake);
-
-    if (stake > 0 && !duel.isFlagged) {
-      const winnerWallet = await this.walletService.findByUserId(winnerId);
-      const prize = stake * 2 * 0.75;
-
-      await this.walletService.credit(winnerWallet.id, prize, TransactionType.PRIZE_PAYOUT, {
-        description: `Forfeit winnings: duel ${duelId}`,
-        extra: { duelId, reason: 'forfeit' },
-      });
-    }
-
+    // Free-to-play: no stake pot, no prize payout on forfeit. Progression still awarded.
     await this.progressionService.award(duel);
 
     this.logger.log(`Duel forfeited: ${duelId} by ${forfeitingUserId} winner=${winnerId}`);
@@ -1139,42 +1048,11 @@ export class DuelsService {
     return this.finalizeWithResolver(duel);
   }
 
-  private async handleCompletionPrize(duel: Duel): Promise<void> {
-    const stake = parseFloat(duel.stake);
-
-    if (stake <= 0 || duel.isFlagged) return;
-
-    const isDraw = duel.resolution === 'draw' || (duel.resolution === null && duel.isTie);
-
-    if (isDraw) {
-      const [cWallet, oWallet] = await Promise.all([
-        this.walletService.findByUserId(duel.challengerId),
-        this.walletService.findByUserId(duel.opponentId!),
-      ]);
-
-      await Promise.all([
-        this.walletService.credit(cWallet.id, stake, TransactionType.REFUND, {
-          description: `Duel draw refund: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-        this.walletService.credit(oWallet.id, stake, TransactionType.REFUND, {
-          description: `Duel draw refund: ${duel.id}`,
-          extra: { duelId: duel.id },
-        }),
-      ]);
-
-      return;
-    }
-
-    if (!duel.winnerId) return;
-
-    const winnerWallet = await this.walletService.findByUserId(duel.winnerId);
-    const prize = stake * 2 * 0.75;
-
-    await this.walletService.credit(winnerWallet.id, prize, TransactionType.PRIZE_PAYOUT, {
-      description: `Duel prize: ${duel.id}`,
-      extra: { duelId: duel.id },
-    });
+  private async handleCompletionPrize(_duel: Duel): Promise<void> {
+    // Free-to-play: duels have no stake pot, so there is no prize/refund payout on
+    // completion. Progression (XP/rank/season points) is awarded separately and is
+    // unaffected. Kept as a no-op so the completion flow's call sites stay intact.
+    return;
   }
 
   async resolveExpiredSteal(duelId: string): Promise<{
