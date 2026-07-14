@@ -72,7 +72,10 @@ function makeUsersRepo(users: { id: string; username: string }[] = []) {
 
 function build(resultsRepo: any, usersRepo: any = makeUsersRepo()) {
   const challengeService = new ChallengeService();
-  const award = { awardSoloXp: jest.fn(async () => undefined) };
+  const award = {
+    awardSoloXp: jest.fn(async () => undefined),
+    awardSoloXpWithSnapshot: jest.fn(async () => null),
+  };
   const service = new DailyService(
     resultsRepo as unknown as Repository<DailyResult>,
     usersRepo as unknown as Repository<User>,

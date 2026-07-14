@@ -302,6 +302,7 @@ export class ProgressionController {
       level: {
         number: levelDto.number,
         xp: levelDto.xp,
+        intoLevel: levelDto.intoLevel,
         xpToNext: levelDto.xpToNext,
         milestonesUnlocked: levelDto.milestonesUnlocked,
       },

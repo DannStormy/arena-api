@@ -7,6 +7,11 @@ export class LevelProgressionDto {
   @ApiProperty()
   xp: number;
 
+  // XP earned INTO the current level (0..levelSpan). With xpToNext this gives the
+  // level span (intoLevel + xpToNext), so a client can draw the progress bar.
+  @ApiProperty()
+  intoLevel: number;
+
   @ApiPropertyOptional({ nullable: true })
   xpToNext: number | null;
 

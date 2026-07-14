@@ -14,6 +14,7 @@ import {
   DAILY_XP_BONUS,
 } from './daily.constants';
 import { computeDailyStreak, dailySeed, utcDateString } from './daily.util';
+import type { SoloXpSnapshot } from '../progression/services/progression-award.service';
 
 export interface DailyResultView {
   score: number;
@@ -35,6 +36,8 @@ export interface DailyStateView {
 
 export interface DailyCompleteView extends DailyResultView {
   alreadyPlayed: boolean;
+  // Present on a first completion (for the XP-bar reveal); null on a replay.
+  progression: SoloXpSnapshot | null;
 }
 
 export interface DailyLeaderboardView {
@@ -104,7 +107,7 @@ export class DailyService {
 
     const existing = await this.resultsRepo.findOne({ where: { userId, date } });
     if (existing) {
-      return { ...(await this.buildResultView(userId, date, existing)), alreadyPlayed: true };
+      return { ...(await this.buildResultView(userId, date, existing)), alreadyPlayed: true, progression: null };
     }
 
     // Server-authoritative scoring: re-derive and validate EVERY answer. The
@@ -138,21 +141,25 @@ export class DailyService {
       if (err instanceof QueryFailedError) {
         const raced = await this.resultsRepo.findOne({ where: { userId, date } });
         if (raced) {
-          return { ...(await this.buildResultView(userId, date, raced)), alreadyPlayed: true };
+          return { ...(await this.buildResultView(userId, date, raced)), alreadyPlayed: true, progression: null };
         }
       }
       throw err;
     }
 
-    // Modest, idempotent daily XP (level ledger only). Fire-and-forget: a
-    // progression hiccup must never block recording the result.
-    void this.progressionAward
-      .awardSoloXp(userId, `daily:${date}`, DAILY_XP_BONUS)
-      .catch((e) => this.logger.warn(`daily XP award failed: ${e}`));
+    // Modest, idempotent daily XP (level ledger only), awaited so the response
+    // can carry a before→after snapshot for the results XP bar. A progression
+    // hiccup must never block recording the result → fall back to null.
+    const progression = await this.progressionAward
+      .awardSoloXpWithSnapshot(userId, `daily:${date}`, DAILY_XP_BONUS)
+      .catch((e) => {
+        this.logger.warn(`daily XP award failed: ${e}`);
+        return null;
+      });
 
     this.logger.log(`Daily result recorded: ${userId} ${date} score=${score} correct=${correctCount}`);
 
-    return { ...(await this.buildResultView(userId, date, saved)), alreadyPlayed: false };
+    return { ...(await this.buildResultView(userId, date, saved)), alreadyPlayed: false, progression };
   }
 
   /** Top-20 leaderboard for a day (default today) plus the caller's own line. */

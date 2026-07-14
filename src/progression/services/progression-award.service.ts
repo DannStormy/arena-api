@@ -53,6 +53,20 @@ export interface DuelAwardPayload {
   opponent: PlayerAwardPayload;
 }
 
+// Minimal before→after LEVEL snapshot for a solo results XP bar (no rank fields —
+// solo never moves season rank). intoLevel/levelSpan drive the bar fill.
+export interface SoloXpSnapshot {
+  xpBefore: number;
+  xpAfter: number;
+  xpAwarded: number;
+  levelBefore: number;
+  levelAfter: number;
+  intoLevelBefore: number;
+  intoLevelAfter: number;
+  levelSpanBefore: number;
+  levelSpanAfter: number;
+}
+
 function buildCumulative(base: number, growth: number, maxLevel: number): number[] {
   const arr = [0];
   let total = 0;
@@ -230,6 +244,62 @@ export class ProgressionAwardService {
 
     // Re-derive the LEVEL projection so GET /progression/me shows the new XP.
     await this.projectionService.updateForUser(userId, Ledger.LEVEL, null, cfg);
+  }
+
+  /**
+   * Like awardSoloXp, but AWAITED and returns a before→after LEVEL snapshot so a
+   * results screen can animate an XP bar filling (and celebrate a level-up).
+   * Level ledger only — season rank is never touched. Idempotent per sourceId,
+   * so a replay returns a zero-gain snapshot rather than double-awarding.
+   */
+  async awardSoloXpWithSnapshot(
+    userId: string,
+    sourceId: string,
+    points: number,
+  ): Promise<SoloXpSnapshot | null> {
+    if (!userId || !sourceId) return null;
+    const pts = Math.max(0, Math.min(SOLO_XP_MAX_PER_EVENT, Math.round(points)));
+    const { values: cfg, versionId } = await this.configService.getEffective();
+
+    const before = await this.projectionService.getOrInit(userId, Ledger.LEVEL, null);
+    const xpBefore = before.total;
+    const levelBefore = before.levelNumber ?? 1;
+
+    if (pts > 0) {
+      await this.eventsRepo.manager.query(
+        `INSERT INTO progression_events
+           (id, "userId", ledger, points, reason, "sourceType", "sourceId", "seasonId", "configVersionId", "createdAt")
+         VALUES
+           (gen_random_uuid(), $1, 'level', $2, $3, 'solo', $4, NULL, $5, NOW())
+         ON CONFLICT ("userId", ledger, "sourceType", "sourceId", reason) DO NOTHING`,
+        [userId, pts, EventReason.SOLO_PRACTICE, sourceId, versionId !== 'default' ? versionId : null],
+      );
+    }
+
+    const after = await this.projectionService.updateForUser(userId, Ledger.LEVEL, null, cfg);
+    const xpAfter = after.total;
+    const levelAfter = after.levelNumber ?? 1;
+
+    const cumulative = buildCumulative(cfg.levelBase, cfg.levelGrowth, cfg.maxLevel);
+    const span = (lvl: number) => {
+      const start = cumulative[lvl - 1] ?? 0;
+      const next = lvl < cfg.maxLevel ? (cumulative[lvl] ?? start) : start;
+      return { start, size: Math.max(1, next - start) };
+    };
+    const b = span(levelBefore);
+    const a = span(levelAfter);
+
+    return {
+      xpBefore,
+      xpAfter,
+      xpAwarded: xpAfter - xpBefore,
+      levelBefore,
+      levelAfter,
+      intoLevelBefore: xpBefore - b.start,
+      intoLevelAfter: xpAfter - a.start,
+      levelSpanBefore: b.size,
+      levelSpanAfter: a.size,
+    };
   }
 
   // ── Async duel award ───────────────────────────────────────────────────────
