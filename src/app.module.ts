@@ -19,6 +19,7 @@ import { ProgressionModule } from './progression/progression.module';
 import { ChallengeModule } from './challenges/challenge.module';
 import { StreakModule } from './streak/streak.module';
 import { AsyncDuelsModule } from './async-duels/async-duels.module';
+import { DailyModule } from './daily/daily.module';
 
 @Module({
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
@@ -63,6 +64,7 @@ import { AsyncDuelsModule } from './async-duels/async-duels.module';
     ChallengeModule,
     AsyncDuelsModule,
     StreakModule,
+    DailyModule,
   ],
 })
 export class AppModule {}
