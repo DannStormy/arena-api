@@ -4,8 +4,8 @@ import { DailyResult } from './entities/daily-result.entity';
 import { ChallengeService } from '../challenges/challenge.service';
 import { ProgressionAwardService } from '../progression/services/progression-award.service';
 import { User } from '../users/entities/user.entity';
-import { DAILY_DIFFICULTY, DAILY_MODE } from './daily.constants';
-import { dailySeed } from './daily.util';
+import { DAILY_DIFFICULTY } from './daily.constants';
+import { dailyModeFor, dailySeed } from './daily.util';
 
 /**
  * Minimal in-memory stand-in for the DailyResult repo. Handles just the query
@@ -92,6 +92,13 @@ function evalExpr(expression: string): number {
   return eval(normalized) as number;
 }
 
+/** Correct answer for a daily challenge in EITHER rotated mode (math or memory).
+ *  Memory's correct answer is the flashed sequence, which the client set keeps. */
+function correctAnswerFor(c: { prompt: Record<string, unknown> }): number | number[] {
+  if (typeof c.prompt.expression === 'string') return evalExpr(c.prompt.expression);
+  return (c.prompt.sequence as number[] | undefined) ?? [];
+}
+
 const DAY_A = new Date('2026-07-14T09:30:00.000Z');
 const DAY_B = new Date('2026-07-15T00:00:01.000Z');
 
@@ -104,7 +111,7 @@ describe('DailyService', () => {
 
       expect(first.date).toBe('2026-07-14');
       expect(first.matchSeed).toBe('daily:2026-07-14');
-      expect(first.mode).toBe(DAILY_MODE);
+      expect(first.mode).toBe(dailyModeFor('2026-07-14'));
       expect(first.difficulty).toBe(DAILY_DIFFICULTY);
       expect(first.challenges).toHaveLength(10);
       // Same day → byte-identical set for everyone.
@@ -122,6 +129,13 @@ describe('DailyService', () => {
       expect(b.matchSeed).not.toBe(a.matchSeed);
       expect(b.challenges).not.toEqual(a.challenges);
     });
+
+    it('rotates the challenge mode by day (deterministic)', () => {
+      // Same day → same mode; the next day differs; a full cycle returns.
+      expect(dailyModeFor('2026-07-14')).toBe(dailyModeFor('2026-07-14'));
+      expect(dailyModeFor('2026-07-14')).not.toBe(dailyModeFor('2026-07-15'));
+      expect(dailyModeFor('2026-07-14')).toBe(dailyModeFor('2026-07-16'));
+    });
   });
 
   describe('completeDaily one-shot', () => {
@@ -132,13 +146,13 @@ describe('DailyService', () => {
       const seed = dailySeed('2026-07-14');
       const set = challengeService.generateSet({
         matchSeed: seed,
-        mode: DAILY_MODE,
+        mode: dailyModeFor('2026-07-14'),
         count: 10,
         difficulty: DAILY_DIFFICULTY,
       });
       const correctAnswers = set.map((c, i) => ({
         index: i,
-        answer: evalExpr((c.prompt as { expression: string }).expression),
+        answer: correctAnswerFor(c as { prompt: Record<string, unknown> }),
         elapsedMs: 1500,
       }));
 

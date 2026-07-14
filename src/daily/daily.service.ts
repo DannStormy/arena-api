@@ -7,13 +7,8 @@ import { ProgressionAwardService } from '../progression/services/progression-awa
 import { User } from '../users/entities/user.entity';
 import { CompleteDailyDto } from './dto/complete-daily.dto';
 import { DailyResult } from './entities/daily-result.entity';
-import {
-  DAILY_COUNT,
-  DAILY_DIFFICULTY,
-  DAILY_MODE,
-  DAILY_XP_BONUS,
-} from './daily.constants';
-import { computeDailyStreak, dailySeed, utcDateString } from './daily.util';
+import { DAILY_COUNT, DAILY_DIFFICULTY, DAILY_XP_BONUS } from './daily.constants';
+import { computeDailyStreak, dailyModeFor, dailySeed, utcDateString } from './daily.util';
 import type { SoloXpSnapshot } from '../progression/services/progression-award.service';
 
 export interface DailyResultView {
@@ -69,10 +64,11 @@ export class DailyService {
   async getDaily(userId: string, now: Date = new Date()): Promise<DailyStateView> {
     const date = utcDateString(now);
     const matchSeed = dailySeed(date);
+    const mode = dailyModeFor(date);
 
     const challenges = this.challengeService.generateSet({
       matchSeed,
-      mode: DAILY_MODE,
+      mode,
       count: DAILY_COUNT,
       difficulty: DAILY_DIFFICULTY,
     });
@@ -81,7 +77,7 @@ export class DailyService {
 
     return {
       date,
-      mode: DAILY_MODE,
+      mode,
       difficulty: DAILY_DIFFICULTY,
       matchSeed,
       challenges,
@@ -104,6 +100,7 @@ export class DailyService {
   ): Promise<DailyCompleteView> {
     const date = utcDateString(now);
     const matchSeed = dailySeed(date);
+    const mode = dailyModeFor(date);
 
     const existing = await this.resultsRepo.findOne({ where: { userId, date } });
     if (existing) {
@@ -120,7 +117,7 @@ export class DailyService {
       }
       const validation = this.challengeService.validateSubmission({
         matchSeed,
-        mode: DAILY_MODE,
+        mode,
         difficulty: DAILY_DIFFICULTY,
         index: a.index,
         submitted: a.answer,
