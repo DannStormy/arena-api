@@ -16,6 +16,17 @@ import { User } from '../../users/entities/user.entity';
 import { rankFromSeasonPoints } from '../../common/rank-tiers';
 import { currentSeasonId, awardFor } from '../../duels/duel-progression';
 
+/** Hard ceiling on any single solo-play XP award — keeps solo un-farmable into big numbers. */
+export const SOLO_XP_MAX_PER_EVENT = 50;
+/** XP for one correct solo Speed Math / Memory validate. */
+export const SOLO_CHALLENGE_XP_PER_CORRECT = 2;
+
+/** Modest XP for finishing a solo trivia session (clamped by SOLO_XP_MAX_PER_EVENT). */
+export function soloTriviaXp(correctAnswers: number): number {
+  const correct = Number.isFinite(correctAnswers) ? Math.max(0, correctAnswers) : 0;
+  return 10 + correct * 3;
+}
+
 // Returned to DuelProgressionService for ProgressionSnapshot building
 export interface PlayerAwardPayload {
   userId: string;
@@ -182,6 +193,43 @@ export class ProgressionAwardService {
         cumulative,
       ),
     };
+  }
+
+  // ── Solo play award ────────────────────────────────────────────────────────
+
+  /**
+   * Award a MODEST amount of XP (level ledger only — never season points, so it
+   * never inflates duel/tournament rank) for solo play: solo Speed Math / Memory
+   * practice validates, and solo trivia completions.
+   *
+   * Abuse-resistant by construction:
+   *   - The amount is hard-clamped to SOLO_XP_MAX_PER_EVENT here, so no caller can
+   *     ever push a large number through.
+   *   - Written with sourceType='solo' and a caller-supplied stable sourceId; the
+   *     ON CONFLICT clause makes re-submitting the SAME challenge/session a no-op,
+   *     so a single unit of play can only ever be counted once.
+   *
+   * Fire-and-forget from gameplay paths: it re-derives the LEVEL projection so
+   * GET /progression/me reflects the gain immediately.
+   */
+  async awardSoloXp(userId: string, sourceId: string, points: number): Promise<void> {
+    if (!userId || !sourceId) return;
+    const pts = Math.max(0, Math.min(SOLO_XP_MAX_PER_EVENT, Math.round(points)));
+    if (pts === 0) return;
+
+    const { values: cfg, versionId } = await this.configService.getEffective();
+
+    await this.eventsRepo.manager.query(
+      `INSERT INTO progression_events
+         (id, "userId", ledger, points, reason, "sourceType", "sourceId", "seasonId", "configVersionId", "createdAt")
+       VALUES
+         (gen_random_uuid(), $1, 'level', $2, $3, 'solo', $4, NULL, $5, NOW())
+       ON CONFLICT ("userId", ledger, "sourceType", "sourceId", reason) DO NOTHING`,
+      [userId, pts, EventReason.SOLO_PRACTICE, sourceId, versionId !== 'default' ? versionId : null],
+    );
+
+    // Re-derive the LEVEL projection so GET /progression/me shows the new XP.
+    await this.projectionService.updateForUser(userId, Ledger.LEVEL, null, cfg);
   }
 
   // ── Async duel award ───────────────────────────────────────────────────────

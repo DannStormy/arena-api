@@ -5,4 +5,5 @@
 export enum ChallengeMode {
   SPEED_MATH = 'speed_math',
   BRAIN_DUEL = 'brain_duel',
+  MEMORY = 'memory',
 }

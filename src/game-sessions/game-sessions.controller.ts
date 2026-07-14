@@ -25,13 +25,24 @@ import { SubmitAnswerDto } from './dto/submit-answer.dto';
 import { SubmitAnswerResponseDto } from './dto/submit-answer-response.dto';
 import { SessionResultDto } from './dto/session-result.dto';
 import { QuestionResponseDto } from '../questions/dto/question-response.dto';
-import { IsUUID } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { QuestionCategory } from '../questions/types/question-category.enum';
 
 class StartSessionDto {
   @ApiProperty()
   @IsUUID()
   tournamentId: string;
+}
+
+class StartSoloSessionDto {
+  @ApiPropertyOptional({
+    enum: QuestionCategory,
+    description: 'Optional category to focus on; omit for a mixed set',
+  })
+  @IsOptional()
+  @IsEnum(QuestionCategory)
+  category?: QuestionCategory;
 }
 
 @ApiTags('Game Sessions')
@@ -50,6 +61,17 @@ export class GameSessionsController {
     @Body() dto: StartSessionDto,
   ): Promise<StartSessionResponseDto> {
     return this.gameSessionsService.startSession(user.sub, dto.tournamentId);
+  }
+
+  @Post('solo')
+  @ApiOperation({ summary: 'Start a solo (tournament-less) trivia session' })
+  @ApiBody({ type: StartSoloSessionDto, required: false })
+  @ApiResponse({ status: 201, type: StartSessionResponseDto })
+  async startSoloSession(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: StartSoloSessionDto,
+  ): Promise<StartSessionResponseDto> {
+    return this.gameSessionsService.startSoloSession(user.sub, dto?.category);
   }
 
   @Get(':id/questions')

@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ChallengeGenerator } from './generators/challenge-generator.interface';
 import { MathGenerator } from './generators/math.generator';
+import { MemoryGenerator } from './generators/memory.generator';
 import { ChallengeType } from './types/challenge-type.enum';
 import { ChallengeMode } from './types/challenge-mode.enum';
 import { Challenge, GeneratedChallenge } from './types/challenge.interface';
@@ -42,7 +43,7 @@ export class ChallengeService {
 
   constructor() {
     // Register generators here. Adding one makes it available to BRAIN_DUEL.
-    const registered: ChallengeGenerator[] = [new MathGenerator()];
+    const registered: ChallengeGenerator[] = [new MathGenerator(), new MemoryGenerator()];
     this.generators = new Map(registered.map((g) => [g.type, g]));
     this.logger.log(`Registered generators: ${[...this.generators.keys()].join(', ')}`);
   }
@@ -95,9 +96,16 @@ export class ChallengeService {
       case ChallengeMode.SPEED_MATH:
         wanted = [ChallengeType.MATH];
         break;
+      case ChallengeMode.MEMORY:
+        wanted = [ChallengeType.MEMORY];
+        break;
       case ChallengeMode.BRAIN_DUEL:
-        // every deterministic generator currently registered
-        wanted = [...this.generators.keys()];
+        // Every registered generator EXCEPT keypad-incompatible ones. Brain Duel
+        // is played through the shared numeric ChallengePlayer, so MEMORY (a
+        // tap-sequence answer with its own dedicated UI) must not flow in here —
+        // it would be unplayable on a number keypad. It re-joins automatically
+        // once the shared player can render its answer type.
+        wanted = [...this.generators.keys()].filter((t) => t !== ChallengeType.MEMORY);
         break;
       default:
         throw new BadRequestException(`Unsupported mode: ${mode as string}`);

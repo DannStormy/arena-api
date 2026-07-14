@@ -6,8 +6,8 @@ export class SessionResultDto {
   @ApiProperty()
   id: string;
 
-  @ApiProperty()
-  tournamentId: string;
+  @ApiProperty({ nullable: true, description: 'null for solo sessions' })
+  tournamentId: string | null;
 
   @ApiProperty()
   score: number;

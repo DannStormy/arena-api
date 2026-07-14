@@ -18,6 +18,11 @@ import { SubmitAnswerResponseDto } from './dto/submit-answer-response.dto';
 import { SessionResultDto } from './dto/session-result.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { QuestionCategory } from '../questions/types/question-category.enum';
+import { GameType } from './types/game-type.enum';
+import {
+  ProgressionAwardService,
+  soloTriviaXp,
+} from '../progression/services/progression-award.service';
 import { User } from '../users/entities/user.entity';
 import { Duel } from '../duels/entities/duel.entity';
 import { DuelStatus } from '../duels/types/duel-status.enum';
@@ -50,6 +55,7 @@ export class GameSessionsService {
     private readonly duelsRepo: Repository<Duel>,
     private readonly questionsService: QuestionsService,
     private readonly tournamentsService: TournamentsService,
+    private readonly progressionAward: ProgressionAwardService,
   ) {}
 
   private arenaToCategory(arena: TournamentArena): QuestionCategory {
@@ -81,6 +87,50 @@ export class GameSessionsService {
     const saved = await this.sessionsRepo.save(session);
 
     this.logger.log(`Session started: ${saved.id} user=${userId} tournament=${tournamentId}`);
+
+    const dto = new StartSessionResponseDto();
+    dto.id = saved.id;
+    dto.tournamentId = saved.tournamentId;
+    dto.userId = saved.userId;
+    dto.gameType = saved.gameType;
+    dto.status = saved.status;
+    dto.totalQuestions = saved.questionIds.length;
+    dto.startedAt = saved.startedAt;
+
+    return dto;
+  }
+
+  /**
+   * Start a SOLO (tournament-less) trivia session. Selects N random active
+   * questions — optionally filtered to a category, else mixed — and returns the
+   * same shape as the tournament start. There is no prize/entry logic; a modest
+   * solo XP is granted on completion (see completeSession).
+   */
+  async startSoloSession(
+    userId: string,
+    category?: QuestionCategory,
+  ): Promise<StartSessionResponseDto> {
+    const questions = await this.questionsService.selectSoloQuestions(
+      userId,
+      QUESTIONS_PER_SESSION,
+      category,
+    );
+
+    if (questions.length === 0) {
+      throw new BadRequestException('No questions available yet — please try again shortly');
+    }
+
+    const session = this.sessionsRepo.create({
+      tournamentId: null,
+      userId,
+      gameType: GameType.LIGHTNING_TRIVIA,
+      questionIds: questions.map((q) => q.id),
+      status: SessionStatus.ACTIVE,
+    });
+
+    const saved = await this.sessionsRepo.save(session);
+
+    this.logger.log(`Solo session started: ${saved.id} user=${userId} category=${category ?? 'mixed'}`);
 
     const dto = new StartSessionResponseDto();
     dto.id = saved.id;
@@ -288,11 +338,14 @@ export class GameSessionsService {
       completedAt,
     });
 
-    await this.tournamentsService.updateEntryScore(
-      session.tournamentId,
-      session.userId,
-      session.score,
-    );
+    // Solo sessions have no tournament — skip entry-score/prize bookkeeping.
+    if (session.tournamentId) {
+      await this.tournamentsService.updateEntryScore(
+        session.tournamentId,
+        session.userId,
+        session.score,
+      );
+    }
 
     const answers = await this.answersRepo.find({ where: { sessionId } });
 
@@ -304,8 +357,11 @@ export class GameSessionsService {
       );
     }
 
-    // Award XP and build progression snapshot (idempotent, honours flagged-session hold)
-    const snapshot = await this.awardTournamentProgression(session);
+    // Award XP and build progression snapshot (idempotent, honours flagged-session hold).
+    // Tournament sessions run the tournament XP path; solo sessions get modest solo XP.
+    const snapshot = session.tournamentId
+      ? await this.awardTournamentProgression(session)
+      : await this.awardSoloProgression(session);
 
     this.logger.log(
       `Session completed: ${sessionId} score=${session.score} flagged=${session.isFlagged}`,
@@ -394,6 +450,31 @@ export class GameSessionsService {
     );
 
     return snapshot;
+  }
+
+  /**
+   * Solo-session progression: modest XP into the LEVEL ledger (same mechanism as
+   * solo Speed Math), so a solo trivia run moves the player's rank. No season
+   * points, no prize logic, no reveal snapshot. Idempotent per session; never
+   * throws into the completion path.
+   */
+  private async awardSoloProgression(session: GameSession): Promise<ProgressionSnapshot | null> {
+    if (session.progressionAwarded) return session.sessionProgression;
+    if (session.isFlagged) return null;
+
+    try {
+      await this.progressionAward.awardSoloXp(
+        session.userId,
+        `session:${session.id}`,
+        soloTriviaXp(session.correctAnswers),
+      );
+      await this.sessionsRepo.update(session.id, { progressionAwarded: true });
+      this.logger.log(`Solo progression awarded: session=${session.id} user=${session.userId}`);
+    } catch (err) {
+      this.logger.warn(`Solo XP award failed for session=${session.id}: ${err}`);
+    }
+
+    return null;
   }
 
   private async isFirstGameOfDay(userId: string, sessionId: string): Promise<boolean> {

@@ -8,12 +8,14 @@ import { GameSessionsService } from './game-sessions.service';
 import { GameSessionsController } from './game-sessions.controller';
 import { QuestionsModule } from '../questions/questions.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
+import { ProgressionModule } from '../progression/progression.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([GameSession, GameAnswer, User, Duel]),
     QuestionsModule,
     TournamentsModule,
+    ProgressionModule,
   ],
   providers: [GameSessionsService],
   controllers: [GameSessionsController],

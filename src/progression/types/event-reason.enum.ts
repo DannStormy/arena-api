@@ -6,4 +6,6 @@ export enum EventReason {
   SEASON_RESET = 'season_reset',
   ADJUSTMENT = 'adjustment',
   SEED = 'seed',
+  // Modest XP for solo play (Speed Math / Memory practice, solo trivia).
+  SOLO_PRACTICE = 'solo_practice',
 }

@@ -1,6 +1,6 @@
 import { ChallengeType } from './challenge-type.enum';
 
-export type ChallengeAnswerType = 'number' | 'text' | 'choice';
+export type ChallengeAnswerType = 'number' | 'text' | 'choice' | 'sequence';
 
 /** Generator-specific, tiny, JSON-serialisable, and client-safe. */
 export type ChallengePrompt = Record<string, unknown>;

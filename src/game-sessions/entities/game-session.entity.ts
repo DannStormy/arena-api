@@ -15,11 +15,12 @@ export class GameSession {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => Tournament, { onDelete: 'CASCADE' })
-  tournament: Tournament;
+  // Nullable: solo sessions have no tournament (POST /game-sessions/solo).
+  @ManyToOne(() => Tournament, { onDelete: 'CASCADE', nullable: true })
+  tournament: Tournament | null;
 
-  @Column()
-  tournamentId: string;
+  @Column({ nullable: true })
+  tournamentId: string | null;
 
   @Column()
   userId: string;

@@ -134,6 +134,57 @@ export class QuestionsService {
     return questions;
   }
 
+  /**
+   * Select random active questions for a SOLO session. Like
+   * selectQuestionsForSession but category is optional — when omitted the pool is
+   * mixed across every category. Recently-seen questions are still avoided, and
+   * the exclusion is relaxed automatically if it would leave too few questions.
+   */
+  async selectSoloQuestions(
+    userId: string,
+    count: number,
+    category?: QuestionCategory,
+  ): Promise<Question[]> {
+    const cutoff = new Date(Date.now() - THIRTY_DAYS_MS);
+
+    const recentlySeenIds = await this.historyRepo
+      .createQueryBuilder('h')
+      .select('h.questionId')
+      .where('h.userId = :userId', { userId })
+      .andWhere('h.shownAt > :cutoff', { cutoff })
+      .getMany()
+      .then((rows) => rows.map((r) => r.questionId));
+
+    const build = (excludeSeen: boolean) => {
+      const qb = this.questionsRepo
+        .createQueryBuilder('q')
+        .where('q.isActive = true')
+        .orderBy('RANDOM()')
+        .take(count);
+      if (category) {
+        qb.andWhere('q.category = :category', { category });
+      }
+      if (excludeSeen && recentlySeenIds.length > 0) {
+        qb.andWhere('q.id NOT IN (:...recentlySeenIds)', { recentlySeenIds });
+      }
+      return qb;
+    };
+
+    let questions = await build(true).getMany();
+
+    // If avoiding recently-seen starved the set (small/new bank), fall back to
+    // the full active pool so a solo session always has something to play.
+    if (questions.length < count) {
+      questions = await build(false).getMany();
+    }
+
+    this.logger.log(
+      `Selected ${questions.length} solo questions for userId=${userId} category=${category ?? 'mixed'}`,
+    );
+
+    return questions;
+  }
+
   async reportQuestion(
     questionId: string,
     userId: string,

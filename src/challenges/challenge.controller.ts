@@ -6,6 +6,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { ChallengeService } from './challenge.service';
 import { StreakService } from '../streak/streak.service';
+import {
+  ProgressionAwardService,
+  SOLO_CHALLENGE_XP_PER_CORRECT,
+} from '../progression/services/progression-award.service';
 import { PracticeSetDto } from './dto/practice-set.dto';
 import { ValidateAnswerDto } from './dto/validate-answer.dto';
 import { ChallengeSetResponseDto } from './dto/challenge-set-response.dto';
@@ -21,6 +25,7 @@ export class ChallengeController {
   constructor(
     private readonly challengeService: ChallengeService,
     private readonly streakService: StreakService,
+    private readonly progressionAward: ProgressionAwardService,
   ) {}
 
   @Post('practice')
@@ -47,8 +52,8 @@ export class ChallengeController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Validate one answer (server-authoritative, re-derived from the seed)' })
   @ApiResponse({ status: 200, type: ValidationResultDto })
-  validate(@Body() dto: ValidateAnswerDto): ValidationResultDto {
-    return this.challengeService.validateSubmission({
+  validate(@CurrentUser() user: JwtPayload, @Body() dto: ValidateAnswerDto): ValidationResultDto {
+    const result = this.challengeService.validateSubmission({
       matchSeed: dto.matchSeed,
       mode: dto.mode,
       difficulty: dto.difficulty,
@@ -56,5 +61,18 @@ export class ChallengeController {
       submitted: dto.answer,
       elapsedMs: dto.elapsedMs,
     });
+
+    // Solo play now nudges XP so rank moves outside of duels/tournaments. Only a
+    // correct answer earns it, a small flat amount, and it's idempotent per
+    // (matchSeed:index) — re-validating the same challenge never re-awards, so it
+    // can't be farmed into big numbers. Fire-and-forget: a progression hiccup
+    // must never block gameplay (same pattern as the streak call in /practice).
+    if (result.correct) {
+      void this.progressionAward
+        .awardSoloXp(user.sub, `${dto.matchSeed}:${dto.index}`, SOLO_CHALLENGE_XP_PER_CORRECT)
+        .catch((err) => this.logger.warn(`solo XP award failed: ${err}`));
+    }
+
+    return result;
   }
 }

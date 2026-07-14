@@ -39,11 +39,24 @@ describe('ChallengeService', () => {
     }
   });
 
-  it('BRAIN_DUEL produces a valid set (mixes all registered generators)', () => {
+  it('BRAIN_DUEL mixes keypad-compatible generators but excludes MEMORY', () => {
     const set = service.generateSet({ ...base, mode: ChallengeMode.BRAIN_DUEL });
     expect(set).toHaveLength(10);
-    // Only MATH is registered today, so every challenge should still be MATH.
+    // Brain Duel is played on the numeric keypad, so MEMORY (tap-sequence) is
+    // excluded even though it's registered; only keypad-compatible types appear.
+    expect(set.every((c) => c.type !== ChallengeType.MEMORY)).toBe(true);
     expect(set.every((c) => c.type === ChallengeType.MATH)).toBe(true);
+  });
+
+  it('MEMORY mode yields only MEMORY challenges', () => {
+    const set = service.generateSet({ ...base, mode: ChallengeMode.MEMORY });
+    expect(set).toHaveLength(10);
+    expect(set.every((c) => c.type === ChallengeType.MEMORY)).toBe(true);
+    // Client-safe set keeps the flashable sequence but never the answer.
+    for (const c of set) {
+      expect(c).not.toHaveProperty('answer');
+      expect(Array.isArray((c.prompt as { sequence: number[] }).sequence)).toBe(true);
+    }
   });
 
   it('validates a correct answer re-derived from the seed (nothing stored)', () => {
