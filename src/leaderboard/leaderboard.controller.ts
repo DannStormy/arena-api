@@ -7,6 +7,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { JwtPayload } from '../common/types/jwt-payload.type';
 import { LeaderboardEntryDto } from './dto/leaderboard-entry.dto';
 import { DuelLeaderboardEntryDto } from './dto/duel-leaderboard-entry.dto';
+import { LevelLeaderboardEntryDto } from './dto/level-leaderboard-entry.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
@@ -54,5 +55,20 @@ export class LeaderboardController {
     @Query() query: DuelLeaderboardQueryDto,
   ): Promise<PaginatedResponseDto<DuelLeaderboardEntryDto>> {
     return this.leaderboardService.getDuelLeaderboard(user.sub, query, query.arena);
+  }
+
+  @Get('level')
+  @ApiOperation({
+    summary:
+      'All-time XP/level leaderboard — populated by ALL play (solo Speed Math, Memory, ' +
+      "and the Daily earn level-XP), so everyone who plays appears. The caller's own row " +
+      'is appended to `data` if outside the current page.',
+  })
+  @ApiResponse({ status: 200, type: PaginatedResponseDto })
+  async getLevelLeaderboard(
+    @CurrentUser() user: JwtPayload,
+    @Query() query: PaginatedQueryDto,
+  ): Promise<PaginatedResponseDto<LevelLeaderboardEntryDto>> {
+    return this.leaderboardService.getLevelLeaderboard(user.sub, query);
   }
 }

@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { TournamentEntry } from '../tournaments/entities/tournament-entry.entity';
 import { User } from '../users/entities/user.entity';
 import { Duel } from '../duels/entities/duel.entity';
@@ -8,6 +8,7 @@ import { ProgressionProjection } from '../progression/entities/progression-proje
 import { Ledger } from '../progression/types/ledger.enum';
 import { LeaderboardEntryDto } from './dto/leaderboard-entry.dto';
 import { DuelLeaderboardEntryDto } from './dto/duel-leaderboard-entry.dto';
+import { LevelLeaderboardEntryDto } from './dto/level-leaderboard-entry.dto';
 import { TournamentArena } from '../tournaments/types/tournament-arena.enum';
 import { currentSeasonId } from '../duels/duel-progression';
 import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
@@ -163,6 +164,74 @@ export class LeaderboardService {
         selfDto.isRequestingUser = true;
 
         entries.push(selfDto);
+      }
+    }
+
+    return new PaginatedResponseDto(entries, total, page, limit);
+  }
+
+  /**
+   * All-time XP/level board. LEVEL projections are permanent (seasonId null) and
+   * earned by ALL play — solo Speed Math, Memory, the Daily — so everyone who
+   * plays climbs this, unlike the duel-rank board which needs live opponents.
+   */
+  async getLevelLeaderboard(
+    requestingUserId: string,
+    query: PaginatedQueryDto,
+  ): Promise<PaginatedResponseDto<LevelLeaderboardEntryDto>> {
+    const { page, limit } = query;
+    const offset = (page - 1) * limit;
+
+    const [projections, total] = await this.projectionRepo.findAndCount({
+      where: { ledger: Ledger.LEVEL, seasonId: IsNull() },
+      order: { total: 'DESC' },
+      skip: offset,
+      take: limit,
+    });
+
+    const topUserIds = projections.map((p) => p.userId);
+    const topUsers =
+      topUserIds.length > 0
+        ? await this.usersRepo.createQueryBuilder('u').whereInIds(topUserIds).getMany()
+        : [];
+    const userMap = new Map(topUsers.map((u) => [u.id, u]));
+
+    const build = (
+      proj: ProgressionProjection,
+      rank: number,
+      user: User | undefined,
+    ): LevelLeaderboardEntryDto => {
+      const dto = new LevelLeaderboardEntryDto();
+      dto.rank = rank;
+      dto.userId = proj.userId;
+      dto.username = user?.username ?? '';
+      dto.avatarInitials = computeInitials(user?.username ?? '');
+      dto.avatarUrl = user?.avatarUrl ?? null;
+      dto.xp = proj.total;
+      dto.level = proj.levelNumber ?? 1;
+      dto.isRequestingUser = proj.userId === requestingUserId;
+      return dto;
+    };
+
+    const entries = projections.map((proj, idx) =>
+      build(proj, offset + idx + 1, userMap.get(proj.userId)),
+    );
+
+    // Append the caller's own line if they're off this page (rank = # above + 1).
+    if (!entries.some((e) => e.userId === requestingUserId)) {
+      const myProj = await this.projectionRepo.findOne({
+        where: { userId: requestingUserId, ledger: Ledger.LEVEL, seasonId: IsNull() },
+      });
+      if (myProj) {
+        const higher = await this.projectionRepo
+          .createQueryBuilder('p')
+          .select('COUNT(*)', 'count')
+          .where('p.ledger = :ledger', { ledger: Ledger.LEVEL })
+          .andWhere('p.seasonId IS NULL')
+          .andWhere('p.total > :total', { total: myProj.total })
+          .getRawOne<{ count: string }>();
+        const me = await this.usersRepo.findOne({ where: { id: requestingUserId } });
+        entries.push(build(myProj, Number(higher?.count ?? 0) + 1, me ?? undefined));
       }
     }
 

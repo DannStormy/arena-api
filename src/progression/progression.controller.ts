@@ -105,6 +105,10 @@ export class ProgressionController {
   ): Promise<PaginatedResponseDto<ProgressionLeaderboardEntryDto>> {
     const ledger = query.ledger ?? Ledger.DUEL_RANK;
     const seasonId = query.seasonId ?? currentSeasonId();
+    // Guard pagination — without query params page/limit are undefined, and
+    // .offset(NaN)/.limit(NaN) throws at the SQL layer (was a hard 500).
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
 
     const [rows, total] = await Promise.all([
       this.projectionRepo
@@ -119,8 +123,8 @@ export class ProgressionController {
         ])
         .where('p.ledger = :ledger AND p.seasonId = :seasonId', { ledger, seasonId })
         .orderBy('p.total', 'DESC')
-        .offset((query.page - 1) * query.limit)
-        .limit(query.limit)
+        .offset((page - 1) * limit)
+        .limit(limit)
         .getRawMany<{
           userId: string;
           points: string;
@@ -132,7 +136,7 @@ export class ProgressionController {
     ]);
 
     const data: ProgressionLeaderboardEntryDto[] = rows.map((row, idx) => ({
-      rank: (query.page - 1) * query.limit + idx + 1,
+      rank: (page - 1) * limit + idx + 1,
       userId: row.userId,
       username: row.username,
       avatarUrl: row.avatarUrl,
@@ -140,7 +144,7 @@ export class ProgressionController {
       tier: row.tier ?? 'Spectator',
     }));
 
-    return new PaginatedResponseDto(data, total, query.page, query.limit);
+    return new PaginatedResponseDto(data, total, page, limit);
   }
 
   // ── Admin: config CRUD ─────────────────────────────────────────────────────
