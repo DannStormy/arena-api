@@ -33,7 +33,6 @@ import { ProgressionProjectionService } from './services/progression-projection.
 import { ProgressionSeasonService } from './services/progression-season.service';
 import { ProgressionSeedService } from './services/progression-seed.service';
 import { ProgressionMeDto } from './dto/progression-me.dto';
-import { ProgressionLeaderboardEntryDto } from './dto/progression-leaderboard-entry.dto';
 import { ProgressionConfigVersionResponseDto } from './dto/progression-config-version-response.dto';
 import { CreateProgressionConfigDto } from './dto/create-progression-config.dto';
 import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
@@ -43,18 +42,6 @@ import { isHigherRank, RankTier } from '../common/rank-tiers';
 import { rankFromSeasonPoints } from '../common/rank-tiers';
 import { currentSeasonId } from '../duels/duel-progression';
 import type { ProgressionConfigValues } from './types/progression-config.types';
-
-class LeaderboardQueryDto extends PaginatedQueryDto {
-  @ApiPropertyOptional({ enum: Ledger, default: Ledger.DUEL_RANK })
-  @IsOptional()
-  @IsEnum(Ledger)
-  ledger?: Ledger;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  seasonId?: string;
-}
 
 class SeasonResetBodyDto {
   @ApiPropertyOptional()
@@ -97,55 +84,9 @@ export class ProgressionController {
     return this.buildProgressionDto(user.sub);
   }
 
-  @Get('leaderboard')
-  @ApiOperation({ summary: 'Season rank leaderboard (duel_rank or tournament_rank)' })
-  @ApiResponse({ status: 200, type: PaginatedResponseDto })
-  async getLeaderboard(
-    @Query() query: LeaderboardQueryDto,
-  ): Promise<PaginatedResponseDto<ProgressionLeaderboardEntryDto>> {
-    const ledger = query.ledger ?? Ledger.DUEL_RANK;
-    const seasonId = query.seasonId ?? currentSeasonId();
-    // Guard pagination — without query params page/limit are undefined, and
-    // .offset(NaN)/.limit(NaN) throws at the SQL layer (was a hard 500).
-    const page = Math.max(1, Number(query.page) || 1);
-    const limit = Math.min(100, Math.max(1, Number(query.limit) || 20));
-
-    const [rows, total] = await Promise.all([
-      this.projectionRepo
-        .createQueryBuilder('p')
-        .innerJoin('users', 'u', 'u.id = p.userId')
-        .select([
-          'p.userId AS "userId"',
-          'p.total AS "points"',
-          'p.tier AS "tier"',
-          'u.username AS "username"',
-          'u."avatarUrl" AS "avatarUrl"',
-        ])
-        .where('p.ledger = :ledger AND p.seasonId = :seasonId', { ledger, seasonId })
-        .orderBy('p.total', 'DESC')
-        .offset((page - 1) * limit)
-        .limit(limit)
-        .getRawMany<{
-          userId: string;
-          points: string;
-          tier: string;
-          username: string;
-          avatarUrl: string | null;
-        }>(),
-      this.projectionRepo.count({ where: { ledger, seasonId } }),
-    ]);
-
-    const data: ProgressionLeaderboardEntryDto[] = rows.map((row, idx) => ({
-      rank: (page - 1) * limit + idx + 1,
-      userId: row.userId,
-      username: row.username,
-      avatarUrl: row.avatarUrl,
-      points: Number(row.points),
-      tier: row.tier ?? 'Spectator',
-    }));
-
-    return new PaginatedResponseDto(data, total, page, limit);
-  }
+  // (Removed the redundant /progression/leaderboard endpoint — it duplicated the
+  //  leaderboard module and 500'd on a raw users join. Use /leaderboard/level
+  //  (all-time XP) and /leaderboard/duels (season rank) instead.)
 
   // ── Admin: config CRUD ─────────────────────────────────────────────────────
 
