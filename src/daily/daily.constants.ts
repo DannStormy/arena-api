@@ -7,7 +7,9 @@ import { ChallengeMode } from '../challenges/types/challenge-mode.enum';
  */
 export const DAILY_MODE = ChallengeMode.SPEED_MATH;
 export const DAILY_COUNT = 10;
-export const DAILY_DIFFICULTY = 4;
+// Base difficulty; the math generator ramps UP from here across the run. (Memory
+// length is index-driven + capped, so this barely affects memory days.)
+export const DAILY_DIFFICULTY = 6;
 
 /** Modest, idempotent XP for completing the Daily Challenge (per UTC day). */
-export const DAILY_XP_BONUS = 15;
+export const DAILY_XP_BONUS = 50;

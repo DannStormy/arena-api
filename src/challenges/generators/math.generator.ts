@@ -18,7 +18,10 @@ export class MathGenerator implements ChallengeGenerator {
   readonly type = ChallengeType.MATH;
 
   generate(rng: SeededRng, difficulty: number, index: number): GeneratedChallenge {
-    const level = clampDifficulty(difficulty);
+    // Escalate within a run: start at the base difficulty and ramp up ~0.6/level
+    // per question, so a 10-question set climbs from the base toward the hard cap
+    // (10). Keeps the opener approachable but ends genuinely challenging.
+    const level = clampDifficulty(difficulty + Math.floor(index * 0.6));
     const op = rng.pick(this.opsFor(level));
     const { expression, answer } = this.build(rng, level, op);
 

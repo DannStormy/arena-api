@@ -17,9 +17,11 @@ import { rankFromSeasonPoints } from '../../common/rank-tiers';
 import { currentSeasonId, awardFor } from '../../duels/duel-progression';
 
 /** Hard ceiling on any single solo-play XP award — keeps solo un-farmable into big numbers. */
-export const SOLO_XP_MAX_PER_EVENT = 50;
+export const SOLO_XP_MAX_PER_EVENT = 60;
 /** XP for one correct solo Speed Math / Memory validate. */
-export const SOLO_CHALLENGE_XP_PER_CORRECT = 2;
+// A perfect ~10-answer run should be worth roughly a level (levelBase 300), so
+// solo play visibly moves your level instead of creeping. Was 2 (kid-tier).
+export const SOLO_CHALLENGE_XP_PER_CORRECT = 30;
 
 /** Modest XP for finishing a solo trivia session (clamped by SOLO_XP_MAX_PER_EVENT). */
 export function soloTriviaXp(correctAnswers: number): number {
