@@ -22,7 +22,11 @@ const STEAL_TIMEOUT_MS = 5000;
 const FORFEIT_TIMEOUT_SECONDS = 60;
 const EARLY_DISCONNECT_GRACE_MS = 30_000;
 
-@WebSocketGateway({ namespace: '/duels', cors: { origin: '*' } })
+// Evaluated at import time, so this reads the raw env; dev falls back to any origin.
+@WebSocketGateway({
+  namespace: '/duels',
+  cors: { origin: process.env.ALLOWED_ORIGINS?.split(',').map((o) => o.trim()) ?? process.env.NODE_ENV !== 'production' },
+})
 export class DuelsGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;

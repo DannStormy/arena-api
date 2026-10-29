@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { ChallengeService } from './challenge.service';
+import { ChallengeService, MIN_ANSWER_MS } from './challenge.service';
 import { ChallengeMode } from './types/challenge-mode.enum';
 import { ChallengeType } from './types/challenge-type.enum';
 import { Challenge } from './types/challenge.interface';
@@ -101,5 +101,18 @@ describe('ChallengeService', () => {
     expect(() => service.generateSet({ ...base, count: 0 })).toThrow(BadRequestException);
     expect(() => service.generateSet({ ...base, count: 999 })).toThrow(BadRequestException);
     expect(() => service.generateSet({ ...base, matchSeed: '' })).toThrow(BadRequestException);
+  });
+
+  describe('timing floor', () => {
+    it('scores a claimed 0ms answer no higher than a 250ms one', () => {
+      const service = new ChallengeService();
+      const [c] = service.generateSet({ matchSeed: 'floor', mode: ChallengeMode.SPEED_MATH, count: 1, difficulty: 3 });
+      const answer = eval((c.prompt.expression as string).replace(/×/g, '*').replace(/÷/g, '/')) as number;
+      const base = { matchSeed: 'floor', mode: ChallengeMode.SPEED_MATH, difficulty: 3, index: 0, submitted: answer };
+      const instant = service.validateSubmission({ ...base, elapsedMs: 0 });
+      const human = service.validateSubmission({ ...base, elapsedMs: MIN_ANSWER_MS });
+      expect(instant.correct).toBe(true);
+      expect(instant.score).toBe(human.score);
+    });
   });
 });

@@ -15,9 +15,6 @@ export class AsyncDuelSetResponseDto {
   @ApiProperty()
   code: string;
 
-  @ApiProperty()
-  matchSeed: string;
-
   @ApiProperty({ enum: ChallengeMode })
   mode: ChallengeMode;
 

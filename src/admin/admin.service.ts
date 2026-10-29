@@ -17,9 +17,7 @@ import { PaginatedQueryDto } from '../common/dto/paginated-query.dto';
 import { PaginatedResponseDto } from '../common/dto/paginated-response.dto';
 import { SessionStatus } from '../game-sessions/types/session-status.enum';
 import { TournamentStatus } from '../tournaments/types/tournament-status.enum';
-import { TransactionType } from '../wallet/types/transaction-type.enum';
-import { WalletService } from '../wallet/wallet.service';
-import { PaystackService } from '../services/paystack/paystack.service';
+import { PayoutsService, PayoutView } from '../payouts/payouts.service';
 
 @Injectable()
 export class AdminService {
@@ -40,8 +38,7 @@ export class AdminService {
     private readonly questionsRepo: Repository<Question>,
     @InjectRepository(GameAnswer)
     private readonly answersRepo: Repository<GameAnswer>,
-    private readonly walletService: WalletService,
-    private readonly paystackService: PaystackService,
+    private readonly payoutsService: PayoutsService,
   ) {}
 
   async listTournaments(query: AdminTournamentQueryDto) {
@@ -194,125 +191,68 @@ export class AdminService {
     return { success: true };
   }
 
-async getPendingPayouts() {
-  const qb = this.entriesRepo
-    .createQueryBuilder('e')
-    .innerJoin('tournaments', 't', 't.id = e."tournamentId"')
-    .innerJoin('users', 'u', 'u.id = e."userId"')
-    .leftJoin(
-      'wallet_transactions',
-      'wt',
-      "wt.type = 'prize_payout' AND wt.meta->>'entryId' = e.id::text",
-    )
-    .where('t.status = :status', { status: TournamentStatus.COMPLETED })
-    .andWhere('e."prizeWon" IS NOT NULL')
-    .andWhere('e."prizeWon" > 0')
-    .andWhere('wt.id IS NULL')
-    .select([
-      'e.id AS "entryId"',
-      'e."userId" AS "userId"',
-      'e."tournamentId" AS "tournamentId"',
-      't.title AS "tournamentTitle"',
-      'u.username AS "username"',
-      'u."bankAccountNumber" AS "bankAccountNumber"',
-      'u."bankCode" AS "bankCode"',
-      'u."bankAccountName" AS "bankAccountName"',
-      'e."prizeWon" AS "prizeWon"',
-    ]);
+  async getPendingPayouts() {
+    const qb = this.entriesRepo
+      .createQueryBuilder('e')
+      .innerJoin('tournaments', 't', 't.id = e."tournamentId"')
+      .innerJoin('users', 'u', 'u.id = e."userId"')
+      .leftJoin('payouts', 'p', 'p."entryId" = e.id::text')
+      .where('t.status = :status', { status: TournamentStatus.COMPLETED })
+      .andWhere('e."prizeWon" IS NOT NULL')
+      .andWhere('e."prizeWon" > 0')
+      .andWhere("(p.id IS NULL OR p.status IN ('pending', 'failed'))")
+      .select([
+        'e.id AS "entryId"',
+        'e."userId" AS "userId"',
+        'e."tournamentId" AS "tournamentId"',
+        't.title AS "tournamentTitle"',
+        'u.username AS "username"',
+        'u."bankAccountNumber" AS "bankAccountNumber"',
+        'u."bankCode" AS "bankCode"',
+        'u."bankAccountName" AS "bankAccountName"',
+        'e."prizeWon" AS "prizeWon"',
+        'p.status AS "payoutStatus"',
+        'p."failureReason" AS "payoutFailureReason"',
+      ]);
 
-  console.log('PAYOUTS SQL:', qb.getSql());
+    type PayoutRow = {
+      entryId: string;
+      userId: string;
+      tournamentId: string;
+      tournamentTitle: string;
+      username: string;
+      bankAccountNumber: string | null;
+      bankCode: string | null;
+      bankAccountName: string | null;
+      prizeWon: string;
+      payoutStatus: string | null;
+      payoutFailureReason: string | null;
+    };
 
-  type PayoutRow = {
-    entryId: string;
-    userId: string;
-    tournamentId: string;
-    tournamentTitle: string;
-    username: string;
-    bankAccountNumber: string | null;
-    bankCode: string | null;
-    bankAccountName: string | null;
-    prizeWon: string;
-  };
+    const rows = await qb.getRawMany<PayoutRow>();
 
-  const rows = await qb.getRawMany<PayoutRow>();
+    const grouped = new Map<
+      string,
+      { tournamentId: string; tournamentTitle: string; winners: PayoutRow[] }
+    >();
 
-  const grouped = new Map<string, { tournamentId: string; tournamentTitle: string; winners: PayoutRow[] }>();
+    for (const row of rows) {
+      if (!grouped.has(row.tournamentId)) {
+        grouped.set(row.tournamentId, {
+          tournamentId: row.tournamentId,
+          tournamentTitle: row.tournamentTitle,
+          winners: [],
+        });
+      }
 
-  for (const row of rows) {
-    if (!grouped.has(row.tournamentId)) {
-      grouped.set(row.tournamentId, {
-        tournamentId: row.tournamentId,
-        tournamentTitle: row.tournamentTitle,
-        winners: [],
-      });
+      grouped.get(row.tournamentId)!.winners.push(row);
     }
 
-    grouped.get(row.tournamentId)!.winners.push(row);
+    return Array.from(grouped.values());
   }
 
-  return Array.from(grouped.values());
-}
-
-  async triggerPayout(dto: TriggerPayoutDto): Promise<{ success: true; transferCode: string }> {
-    const entry = await this.entriesRepo.findOne({
-      where: { id: dto.entryId },
-      relations: { user: true },
-    });
-
-    if (!entry) {
-      throw new NotFoundException('Entry not found');
-    }
-
-    const { user } = entry;
-
-    if (!user.bankAccountNumber || !user.bankCode || !user.bankAccountName) {
-      throw new BadRequestException('Winner has not set up bank details');
-    }
-
-    if (!entry.prizeWon || parseFloat(entry.prizeWon) <= 0) {
-      throw new BadRequestException('No prize to pay out for this entry');
-    }
-
-    const alreadyPaid = await this.txRepo
-      .createQueryBuilder('wt')
-      .where("wt.type = 'prize_payout'")
-      .andWhere("wt.meta->>'entryId' = :entryId", { entryId: dto.entryId })
-      .getOne();
-
-    if (alreadyPaid) {
-      throw new BadRequestException('Payout already sent for this entry');
-    }
-
-    const amountKobo = Math.round(parseFloat(entry.prizeWon) * 100);
-
-    const recipientCode = await this.paystackService.createTransferRecipient(
-      user.bankAccountName,
-      user.bankAccountNumber,
-      user.bankCode,
-    );
-
-    const transferCode = await this.paystackService.initiateTransfer(
-      recipientCode,
-      amountKobo,
-      `Prize payout for entry ${dto.entryId}`,
-    );
-
-    const wallet = await this.walletService.findByUserId(user.id);
-
-    await this.walletService.credit(
-      wallet.id,
-      parseFloat(entry.prizeWon),
-      TransactionType.PRIZE_PAYOUT,
-      {
-        reference: transferCode,
-        description: `Prize payout for tournament entry ${dto.entryId}`,
-        extra: { entryId: dto.entryId, transferCode },
-      },
-    );
-
-    this.logger.log(`Payout triggered: entryId=${dto.entryId} transferCode=${transferCode}`);
-
-    return { success: true, transferCode };
+  triggerPayout(dto: TriggerPayoutDto): Promise<PayoutView> {
+    return this.payoutsService.requestAndDispatch(dto.entryId);
   }
 
   async getStats(): Promise<{
@@ -330,15 +270,11 @@ async getPendingPayouts() {
       this.entriesRepo
         .createQueryBuilder('e')
         .innerJoin('tournaments', 't', 't.id = e."tournamentId"')
-        .leftJoin(
-          'wallet_transactions',
-          'wt',
-          "wt.type = 'prize_payout' AND wt.meta->>'entryId' = e.id::text",
-        )
+        .leftJoin('payouts', 'p', 'p."entryId" = e.id::text')
         .where('t.status = :status', { status: TournamentStatus.COMPLETED })
         .andWhere('e."prizeWon" IS NOT NULL')
         .andWhere('e."prizeWon" > 0')
-        .andWhere('wt.id IS NULL')
+        .andWhere("(p.id IS NULL OR p.status IN ('pending', 'failed'))")
         .getCount(),
     ]);
 

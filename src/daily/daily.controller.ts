@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   Body,
   Controller,
@@ -33,6 +34,7 @@ export class DailyController {
     return this.service.getDaily(user.sub);
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('complete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Submit your one-shot run; server validates every answer and records the result' })

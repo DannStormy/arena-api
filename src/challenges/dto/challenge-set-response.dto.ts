@@ -3,7 +3,7 @@ import { ChallengeMode } from '../types/challenge-mode.enum';
 import { Challenge } from '../types/challenge.interface';
 
 export class ChallengeSetResponseDto {
-  @ApiProperty({ description: 'Seed that reproduces this set; echo it back when validating' })
+  @ApiProperty({ description: 'Opaque signed token for this set; echo it back when validating' })
   matchSeed: string;
 
   @ApiProperty({ enum: ChallengeMode })

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { TournamentStatus } from '../tournaments/types/tournament-status.enum';
 import { GameSession } from './entities/game-session.entity';
 import { GameAnswer } from './entities/game-answer.entity';
 import { SessionStatus } from './types/session-status.enum';
@@ -64,6 +65,17 @@ export class GameSessionsService {
 
   async startSession(userId: string, tournamentId: string): Promise<StartSessionResponseDto> {
     const tournament = await this.tournamentsService.findOne(tournamentId);
+    if (tournament.status !== TournamentStatus.IN_PROGRESS) {
+      throw new BadRequestException('Tournament is not in progress');
+    }
+    if (!(await this.tournamentsService.isEntered(tournamentId, userId))) {
+      throw new BadRequestException('Join the tournament before playing');
+    }
+    // One run per entry; the partial unique index backs this up under races.
+    const previous = await this.sessionsRepo.findOne({ where: { tournamentId, userId } });
+    if (previous) {
+      throw new BadRequestException('You have already played this tournament');
+    }
 
     const category = this.arenaToCategory(tournament.arena);
     const questions = await this.questionsService.selectQuestionsForSession(
@@ -338,8 +350,8 @@ export class GameSessionsService {
       completedAt,
     });
 
-    // Solo sessions have no tournament — skip entry-score/prize bookkeeping.
-    if (session.tournamentId) {
+    // Solo sessions have no tournament, and flagged runs never reach a prize board.
+    if (session.tournamentId && !session.isFlagged) {
       await this.tournamentsService.updateEntryScore(
         session.tournamentId,
         session.userId,

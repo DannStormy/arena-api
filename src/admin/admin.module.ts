@@ -14,6 +14,7 @@ import { WalletModule } from '../wallet/wallet.module';
 import { TournamentsModule } from '../tournaments/tournaments.module';
 import { DuelsModule } from '../duels/duels.module';
 import { QuestionsModule } from '../questions/questions.module';
+import { PayoutsModule } from '../payouts/payouts.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { QuestionsModule } from '../questions/questions.module';
     TournamentsModule,
     DuelsModule,
     QuestionsModule,
+    PayoutsModule,
   ],
   providers: [AdminService],
   controllers: [AdminController],

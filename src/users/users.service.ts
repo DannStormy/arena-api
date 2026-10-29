@@ -1,4 +1,12 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
@@ -15,6 +23,7 @@ import { DuelAnswer } from '../duels/entities/duel-answer.entity';
 import { DuelStatus } from '../duels/types/duel-status.enum';
 import { levelFromXp, currentSeasonId } from '../duels/duel-progression';
 import { rankFromSeasonPoints } from '../common/rank-tiers';
+import { PaystackService } from '../services/paystack/paystack.service';
 
 @Injectable()
 export class UsersService {
@@ -31,6 +40,7 @@ export class UsersService {
     private readonly duelsRepo: Repository<Duel>,
     @InjectRepository(DuelAnswer)
     private readonly duelAnswersRepo: Repository<DuelAnswer>,
+    private readonly paystackService: PaystackService,
   ) {}
 
   async findById(id: string): Promise<User> {
@@ -85,11 +95,33 @@ export class UsersService {
     return { success: true };
   }
 
-  async updateBankDetails(userId: string, dto: UpdateBankDetailsDto): Promise<{ success: true }> {
-    await this.findById(userId);
-    await this.usersRepo.update(userId, dto);
+  async updateBankDetails(
+    userId: string,
+    dto: UpdateBankDetailsDto,
+  ): Promise<{ success: true; bankAccountName: string }> {
+    const user = await this.findById(userId);
+    if (!(await bcrypt.compare(dto.password, user.password))) {
+      throw new UnauthorizedException('Password is incorrect');
+    }
+
+    let bankAccountName: string;
+    try {
+      bankAccountName = await this.paystackService.resolveAccount(
+        dto.bankAccountNumber,
+        dto.bankCode,
+      );
+    } catch {
+      throw new BadRequestException('Could not verify that bank account');
+    }
+
+    await this.usersRepo.update(userId, {
+      bankAccountNumber: dto.bankAccountNumber,
+      bankCode: dto.bankCode,
+      bankAccountName,
+      bankDetailsChangedAt: new Date(),
+    });
     this.logger.log(`Bank details updated: ${userId}`);
-    return { success: true };
+    return { success: true, bankAccountName };
   }
 
   async getMyStats(userId: string): Promise<{
@@ -131,9 +163,7 @@ export class UsersService {
     const questionsAnswered = Number(sessionStats?.questionsAnswered ?? 0);
     const correctAnswers = Number(sessionStats?.correctAnswers ?? 0);
     const accuracy =
-      questionsAnswered > 0
-        ? Math.round((correctAnswers / questionsAnswered) * 10000) / 100
-        : 0;
+      questionsAnswered > 0 ? Math.round((correctAnswers / questionsAnswered) * 10000) / 100 : 0;
 
     const xp = Number(user.lifetimeXp);
     const { level, intoLevel, nextLevelAt } = levelFromXp(xp);
@@ -256,7 +286,10 @@ export class UsersService {
 }
 
 function computeInitials(username: string): string {
-  const words = username.trim().split(/[\s_-]+/).filter(Boolean);
+  const words = username
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean);
   if (words.length >= 2) {
     return (words[0][0] + words[1][0]).toUpperCase();
   }

@@ -1,6 +1,9 @@
+import { randomUUID } from 'crypto';
 import { join } from 'path';
-import { APP_FILTER } from '@nestjs/core';
-import { Module } from '@nestjs/common';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
+import { Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -20,11 +23,28 @@ import { ChallengeModule } from './challenges/challenge.module';
 import { StreakModule } from './streak/streak.module';
 import { AsyncDuelsModule } from './async-duels/async-duels.module';
 import { DailyModule } from './daily/daily.module';
+import { PayoutsModule } from './payouts/payouts.module';
+import { HealthController } from './health/health.controller';
+import { HttpThrottlerGuard } from './common/guards/http-throttler.guard';
 
 @Module({
-  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+  controllers: [HealthController],
+  providers: [
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    { provide: APP_GUARD, useClass: HttpThrottlerGuard },
+  ],
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    LoggerModule.forRoot({
+      forRoutes: [{ path: '*path', method: RequestMethod.ALL }],
+      pinoHttp: {
+        level: process.env.LOG_LEVEL ?? 'info',
+        genReqId: (req) => (req.headers['x-request-id'] as string | undefined) ?? randomUUID(),
+        redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password'],
+        transport: process.env.NODE_ENV === 'production' ? undefined : { target: 'pino-pretty' },
+      },
+    }),
     EventEmitterModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
@@ -37,17 +57,11 @@ import { DailyModule } from './daily/daily.module';
         password: config.get('DB_PASSWORD'),
         database: config.get('DB_NAME'),
         autoLoadEntities: true,
-        // Prod defaults to false (migrations own the schema). DB_SYNCHRONIZE=true
-        // is an explicit escape hatch so a fresh cloud DB can build its schema
-        // from entities on first boot (demo/bring-up) without a migration run.
-        synchronize:
-          config.get('DB_SYNCHRONIZE') === 'true' || config.get('NODE_ENV') !== 'production',
-        // Migrations are registered so the app is aware of them, but
-        // migrationsRun is intentionally NOT enabled yet — the release/run
-        // strategy is decided and wired in Stage 3. The glob resolves relative
-        // to this module's location (dist in prod, src under ts-node).
+        // Migrations own the schema everywhere; they run on boot.
+        synchronize: false,
+        migrationsRun: true,
         migrations: [join(__dirname, 'database', 'migrations', '*{.ts,.js}')],
-        ssl: config.get('DB_SSL') === 'true' ? { rejectUnauthorized: false } : false,
+        ssl: config.get('DB_SSL') === 'true' ? { rejectUnauthorized: true } : false,
       }),
     }),
     AuthModule,
@@ -65,6 +79,7 @@ import { DailyModule } from './daily/daily.module';
     AsyncDuelsModule,
     StreakModule,
     DailyModule,
+    PayoutsModule,
   ],
 })
 export class AppModule {}

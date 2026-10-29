@@ -79,7 +79,7 @@ export class AuthService {
 
       const savedUser = await manager.save(newUser);
 
-      await this.walletService.createWallet(savedUser.id);
+      await this.walletService.createWallet(savedUser.id, manager);
 
       return savedUser;
     });

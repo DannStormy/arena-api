@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -9,6 +10,7 @@ import { Duel } from './duel.entity';
 import { Question } from '../../questions/entities/question.entity';
 
 @Entity('duel_answers')
+@Index('UQ_duel_answer_once', ['duelId', 'userId', 'questionId', 'isSteal'], { unique: true })
 export class DuelAnswer {
   @PrimaryGeneratedColumn('uuid')
   id: string;

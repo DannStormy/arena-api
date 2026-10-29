@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   Body,
   Controller,
@@ -161,6 +162,7 @@ export class AdminController {
     return this.adminService.getPendingPayouts();
   }
 
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('payouts/trigger')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Trigger a prize payout via Paystack transfer (admin)' })

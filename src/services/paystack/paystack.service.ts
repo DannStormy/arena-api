@@ -8,6 +8,10 @@ import {
   PaystackTransferResponse,
 } from './types/paystack.types';
 
+// Paystack answered and said no. Anything else thrown (network, timeout) means the
+// transfer's fate is unknown and must be reconciled, never blindly retried.
+export class PaystackRejectedError extends Error {}
+
 @Injectable()
 export class PaystackService {
   private readonly logger = new Logger(PaystackService.name);
@@ -76,7 +80,7 @@ export class PaystackService {
     return data.data.recipient_code;
   }
 
-  async initiateTransfer(recipientCode: string, amountKobo: number, reason: string): Promise<string> {
+  async initiateTransfer(recipientCode: string, amountKobo: number, reason: string, reference: string): Promise<string> {
     const secretKey = this.config.get<string>('PAYSTACK_SECRET_KEY');
 
     const response = await fetch(`${this.baseUrl}/transfer`, {
@@ -90,13 +94,14 @@ export class PaystackService {
         amount: amountKobo,
         recipient: recipientCode,
         reason,
+        reference,
       }),
     });
 
     const data = (await response.json()) as PaystackTransferResponse;
 
     if (!data.status) {
-      throw new Error(data.message);
+      throw new PaystackRejectedError(data.message);
     }
 
     return data.data.transfer_code;

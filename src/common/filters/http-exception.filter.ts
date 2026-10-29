@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
+import * as Sentry from '@sentry/nestjs';
 
 @Injectable()
 @Catch()
@@ -38,6 +39,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
           : exceptionResponse;
 
     if (status >= 500) {
+      Sentry.captureException(exception);
       const isDev = this.config.get('NODE_ENV') !== 'production';
 
       this.logger.error(

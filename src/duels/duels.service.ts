@@ -278,12 +278,7 @@ export class DuelsService {
       throw new BadRequestException('Duel has expired');
     }
 
-    // Free-to-play: no stake, no wallet debit on accept.
-    duel.opponentId = userId;
-    duel.status = DuelStatus.ACTIVE;
-    duel.startedAt = new Date();
-
-    const saved = await this.duelsRepo.save(duel);
+    const saved = await this.claimPendingDuel(duel.id, userId);
 
     this.logger.log(`Duel accepted: ${saved.id} challenger=${saved.challengerId} opponent=${userId}`);
 
@@ -326,6 +321,18 @@ export class DuelsService {
     return this.createDuel(userId, dto);
   }
 
+  // Conditional update so two players accepting at once can't both win the seat.
+  private async claimPendingDuel(duelId: string, userId: string): Promise<Duel> {
+    const result = await this.duelsRepo
+      .createQueryBuilder()
+      .update(Duel)
+      .set({ opponentId: userId, status: DuelStatus.ACTIVE, startedAt: new Date() })
+      .where('id = :duelId AND status = :pending', { duelId, pending: DuelStatus.PENDING })
+      .execute();
+    if (!result.affected) throw new BadRequestException('Duel no longer available');
+    return this.duelsRepo.findOneOrFail({ where: { id: duelId } });
+  }
+
   private async acceptDuelById(duelId: string, userId: string): Promise<DuelResponseDto> {
     const duel = await this.duelsRepo.findOne({ where: { id: duelId } });
 
@@ -333,12 +340,7 @@ export class DuelsService {
       throw new BadRequestException('Duel no longer available');
     }
 
-    // Free-to-play: no stake, no wallet debit on match.
-    duel.opponentId = userId;
-    duel.status = DuelStatus.ACTIVE;
-    duel.startedAt = new Date();
-
-    const saved = await this.duelsRepo.save(duel);
+    const saved = await this.claimPendingDuel(duel.id, userId);
 
     this.logger.log(`Duel matched: ${saved.id} challenger=${saved.challengerId} opponent=${userId}`);
 
@@ -561,7 +563,16 @@ export class DuelsService {
       timeTakenMs,
     });
 
-    await this.answersRepo.save(answerEntity);
+    // The unique index decides races: a parallel duplicate inserts nothing and scores nothing.
+    const inserted = await this.answersRepo
+      .createQueryBuilder()
+      .insert()
+      .into(DuelAnswer)
+      .values(answerEntity)
+      .orIgnore()
+      .returning('id')
+      .execute();
+    if (!(inserted.raw as unknown[]).length) throw new BadRequestException('Already answered this question');
 
     // Mode-specific scoring
     let scoreAdded = 0;

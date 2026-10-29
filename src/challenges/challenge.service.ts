@@ -8,6 +8,8 @@ import { Challenge, GeneratedChallenge } from './types/challenge.interface';
 import { SeededRng } from './util/seeded-rng';
 
 const MAX_SET_SIZE = 50;
+// Client-reported time can't be trusted, but nobody reads and answers faster than this.
+export const MIN_ANSWER_MS = 250;
 
 export interface GenerateSetParams {
   matchSeed: string;
@@ -69,7 +71,7 @@ export class ChallengeService {
     return {
       index,
       correct: generator.validate(challenge, submitted),
-      score: generator.score(challenge, submitted, elapsedMs),
+      score: generator.score(challenge, submitted, Math.max(MIN_ANSWER_MS, elapsedMs || 0)),
     };
   }
 

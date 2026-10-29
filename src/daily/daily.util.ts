@@ -24,11 +24,6 @@ export function dailyModeFor(dateStr: string): ChallengeMode {
   return DAILY_ROTATION[((dayNumber % len) + len) % len];
 }
 
-/** The deterministic seed everyone shares for a given UTC day. */
-export function dailySeed(dateStr: string): string {
-  return `daily:${dateStr}`;
-}
-
 /** Shift a "YYYY-MM-DD" key by `days` (may be negative), staying in UTC. */
 export function addDaysKey(key: string, days: number): string {
   const d = new Date(`${key}T00:00:00.000Z`);

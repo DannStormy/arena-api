@@ -35,6 +35,9 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   bankAccountName: string | null;
 
+  @Column({ type: 'timestamptz', nullable: true })
+  bankDetailsChangedAt: Date | null;
+
   @Column({ unique: true })
   referralCode: string;
 

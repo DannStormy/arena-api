@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Wallet } from './entities/wallet.entity';
 import { WalletTransaction } from './entities/wallet-transaction.entity';
 import { TransactionType } from './types/transaction-type.enum';
@@ -15,10 +15,25 @@ const CREDIT_TYPES: TransactionType[] = [
   TransactionType.REFUND,
 ];
 
-const DEBIT_TYPES: TransactionType[] = [
-  TransactionType.WITHDRAWAL,
-  TransactionType.ENTRY_FEE,
-];
+const DEBIT_TYPES: TransactionType[] = [TransactionType.WITHDRAWAL, TransactionType.ENTRY_FEE];
+
+type TxMeta = { reference?: string; description?: string; extra?: Record<string, unknown> };
+
+function toTx(
+  walletId: string,
+  amount: number,
+  type: TransactionType,
+  meta?: TxMeta,
+): Partial<WalletTransaction> {
+  return {
+    walletId,
+    type,
+    amount: amount.toFixed(2),
+    reference: meta?.reference,
+    description: meta?.description,
+    meta: meta?.extra,
+  };
+}
 
 @Injectable()
 export class WalletService {
@@ -31,10 +46,9 @@ export class WalletService {
     private readonly txRepo: Repository<WalletTransaction>,
   ) {}
 
-  async createWallet(userId: string): Promise<Wallet> {
-    const wallet = this.walletsRepo.create({ userId });
-
-    return this.walletsRepo.save(wallet);
+  async createWallet(userId: string, manager?: EntityManager): Promise<Wallet> {
+    const repo = manager?.getRepository(Wallet) ?? this.walletsRepo;
+    return repo.save(repo.create({ userId }));
   }
 
   async findByUserId(userId: string): Promise<Wallet> {
@@ -47,8 +61,9 @@ export class WalletService {
     return wallet;
   }
 
-  async getBalance(walletId: string): Promise<string> {
-    const result = await this.txRepo
+  async getBalance(walletId: string, manager?: EntityManager): Promise<string> {
+    const repo = manager?.getRepository(WalletTransaction) ?? this.txRepo;
+    const result = await repo
       .createQueryBuilder('tx')
       .select(
         `COALESCE(SUM(CASE WHEN tx.type IN (:...creditTypes) THEN tx.amount::numeric ELSE 0 END) - ` +
@@ -67,21 +82,12 @@ export class WalletService {
     walletId: string,
     amount: number,
     type: TransactionType,
-    meta?: { reference?: string; description?: string; extra?: Record<string, unknown> },
+    meta?: TxMeta,
+    manager?: EntityManager,
   ): Promise<WalletTransaction> {
-    const tx = this.txRepo.create({
-      walletId,
-      type,
-      amount: amount.toFixed(2),
-      reference: meta?.reference,
-      description: meta?.description,
-      meta: meta?.extra,
-    });
-
-    const saved = await this.txRepo.save(tx);
-
+    const repo = manager?.getRepository(WalletTransaction) ?? this.txRepo;
+    const saved = await repo.save(repo.create(toTx(walletId, amount, type, meta)));
     this.logger.log(`Credit walletId=${walletId} amount=${amount} type=${type}`);
-
     return saved;
   }
 
@@ -89,27 +95,33 @@ export class WalletService {
     walletId: string,
     amount: number,
     type: TransactionType,
-    meta?: { reference?: string; description?: string; extra?: Record<string, unknown> },
+    meta?: TxMeta,
+    manager?: EntityManager,
   ): Promise<WalletTransaction> {
-    const balance = await this.getBalance(walletId);
+    const run = (m: EntityManager) => this.lockedDebit(m, walletId, amount, type, meta);
+    return manager ? run(manager) : this.txRepo.manager.transaction(run);
+  }
 
+  // Locking the wallet row serialises debits, so two can't both pass the balance check.
+  private async lockedDebit(
+    manager: EntityManager,
+    walletId: string,
+    amount: number,
+    type: TransactionType,
+    meta?: TxMeta,
+  ): Promise<WalletTransaction> {
+    await manager
+      .getRepository(Wallet)
+      .findOne({ where: { id: walletId }, lock: { mode: 'pessimistic_write' } });
+
+    const balance = await this.getBalance(walletId, manager);
     if (parseFloat(balance) < amount) {
       throw new BadRequestException('Insufficient wallet balance');
     }
 
-    const tx = this.txRepo.create({
-      walletId,
-      type,
-      amount: amount.toFixed(2),
-      reference: meta?.reference,
-      description: meta?.description,
-      meta: meta?.extra,
-    });
-
-    const saved = await this.txRepo.save(tx);
-
+    const repo = manager.getRepository(WalletTransaction);
+    const saved = await repo.save(repo.create(toTx(walletId, amount, type, meta)));
     this.logger.log(`Debit walletId=${walletId} amount=${amount} type=${type}`);
-
     return saved;
   }
 

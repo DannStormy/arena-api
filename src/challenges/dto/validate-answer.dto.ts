@@ -3,7 +3,7 @@ import { IsDefined, IsEnum, IsInt, IsNotEmpty, IsString, Max, Min } from 'class-
 import { ChallengeMode } from '../types/challenge-mode.enum';
 
 export class ValidateAnswerDto {
-  @ApiProperty({ description: 'The matchSeed returned with the challenge set' })
+  @ApiProperty({ description: 'The matchSeed token returned with the set, or an offline: seed' })
   @IsString()
   @IsNotEmpty()
   matchSeed: string;

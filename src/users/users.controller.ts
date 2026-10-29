@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import { BadRequestException, Body, Controller, Get, HttpCode, HttpStatus, Patch, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -71,15 +72,16 @@ export class UsersController {
     return this.usersService.getMyStats(user.sub);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Patch('me/bank-details')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update current user bank details' })
   @ApiBody({ type: UpdateBankDetailsDto })
-  @ApiResponse({ status: 200, schema: { example: { success: true } } })
+  @ApiResponse({ status: 200, schema: { example: { success: true, bankAccountName: 'JOHN DOE' } } })
   async updateBankDetails(
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateBankDetailsDto,
-  ): Promise<{ success: true }> {
+  ): Promise<{ success: true; bankAccountName: string }> {
     return this.usersService.updateBankDetails(user.sub, dto);
   }
 

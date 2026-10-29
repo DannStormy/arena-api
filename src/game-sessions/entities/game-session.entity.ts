@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -11,6 +12,7 @@ import { SessionStatus } from '../types/session-status.enum';
 import { ProgressionSnapshot } from '../../duels/duel-progression';
 
 @Entity('game_sessions')
+@Index('UQ_session_per_tournament_entry', ['tournamentId', 'userId'], { unique: true, where: '"tournamentId" IS NOT NULL' })
 export class GameSession {
   @PrimaryGeneratedColumn('uuid')
   id: string;

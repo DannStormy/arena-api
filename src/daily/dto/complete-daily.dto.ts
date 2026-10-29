@@ -1,7 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { DAILY_COUNT } from '../daily.constants';
 import {
   Allow,
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsInt,
@@ -29,6 +31,7 @@ export class CompleteDailyDto {
   @ApiProperty({ type: [DailyAnswerInputDto], description: 'The whole run, one entry per challenge' })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(DAILY_COUNT)
   @ValidateNested({ each: true })
   @Type(() => DailyAnswerInputDto)
   answers: DailyAnswerInputDto[];

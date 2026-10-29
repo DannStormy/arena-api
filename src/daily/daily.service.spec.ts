@@ -5,7 +5,13 @@ import { ChallengeService } from '../challenges/challenge.service';
 import { ProgressionAwardService } from '../progression/services/progression-award.service';
 import { User } from '../users/entities/user.entity';
 import { DAILY_DIFFICULTY } from './daily.constants';
-import { dailyModeFor, dailySeed } from './daily.util';
+import { dailyModeFor } from './daily.util';
+import { SeedTokenService } from '../challenges/seed-token.service';
+import { verifySeedToken } from '../challenges/seed-token';
+import type { ConfigService } from '@nestjs/config';
+
+const seedTokens = new SeedTokenService({ get: () => 'test-secret' } as unknown as ConfigService);
+const unwrap = (token: string, at: Date) => verifySeedToken('test-secret', token, 'u1', at.getTime())?.seed;
 
 /**
  * Minimal in-memory stand-in for the DailyResult repo. Handles just the query
@@ -81,6 +87,7 @@ function build(resultsRepo: any, usersRepo: any = makeUsersRepo()) {
     usersRepo as unknown as Repository<User>,
     challengeService,
     award as unknown as ProgressionAwardService,
+    seedTokens,
   );
   return { service, challengeService, award };
 }
@@ -110,7 +117,7 @@ describe('DailyService', () => {
       const second = await service.getDaily('u2', DAY_A);
 
       expect(first.date).toBe('2026-07-14');
-      expect(first.matchSeed).toBe('daily:2026-07-14');
+      expect(unwrap(first.matchSeed, DAY_A)).toBe(seedTokens.dailySeed('2026-07-14'));
       expect(first.mode).toBe(dailyModeFor('2026-07-14'));
       expect(first.difficulty).toBe(DAILY_DIFFICULTY);
       expect(first.challenges).toHaveLength(10);
@@ -125,7 +132,7 @@ describe('DailyService', () => {
       const a = await service.getDaily('u1', DAY_A);
       const b = await service.getDaily('u1', DAY_B);
 
-      expect(b.matchSeed).toBe('daily:2026-07-15');
+      expect(unwrap(b.matchSeed, DAY_B)).toBe(seedTokens.dailySeed('2026-07-15'));
       expect(b.matchSeed).not.toBe(a.matchSeed);
       expect(b.challenges).not.toEqual(a.challenges);
     });
@@ -138,12 +145,34 @@ describe('DailyService', () => {
     });
   });
 
+  describe('completeDaily integrity', () => {
+    it('rejects the same index submitted more than once', async () => {
+      const { service } = build(makeResultsRepo());
+      const spam = Array.from({ length: 5 }, () => ({ index: 0, answer: 1, elapsedMs: 1500 }));
+      await expect(service.completeDaily('u1', { answers: spam }, DAY_A)).rejects.toThrow('submitted twice');
+    });
+
+    it('never exposes the raw daily seed to the client', async () => {
+      const { service } = build(makeResultsRepo());
+      const view = await service.getDaily('u1', DAY_A);
+      expect(view.matchSeed).not.toContain(seedTokens.dailySeed('2026-07-14'));
+      expect(unwrap(view.matchSeed, DAY_A)).toBe(seedTokens.dailySeed('2026-07-14'));
+      expect(verifySeedToken('test-secret', view.matchSeed, 'someone-else', DAY_A.getTime())).toBeNull();
+    });
+
+    it("can't predict tomorrow's seed from today's date", () => {
+      expect(seedTokens.dailySeed('2026-07-15')).not.toBe('daily:2026-07-15');
+      expect(new SeedTokenService({ get: () => 'other' } as unknown as ConfigService).dailySeed('2026-07-15'))
+        .not.toBe(seedTokens.dailySeed('2026-07-15'));
+    });
+  });
+
   describe('completeDaily one-shot', () => {
     it('records the authoritative score and is idempotent (never overwrites)', async () => {
       const repo = makeResultsRepo();
       const { service, challengeService } = build(repo);
 
-      const seed = dailySeed('2026-07-14');
+      const seed = seedTokens.dailySeed('2026-07-14');
       const set = challengeService.generateSet({
         matchSeed: seed,
         mode: dailyModeFor('2026-07-14'),

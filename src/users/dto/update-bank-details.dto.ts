@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class UpdateBankDetailsDto {
   @ApiProperty()
@@ -12,8 +12,13 @@ export class UpdateBankDetailsDto {
   @IsNotEmpty()
   bankCode: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Ignored: the name is resolved from Paystack' })
+  @IsOptional()
+  @IsString()
+  bankAccountName?: string;
+
+  @ApiProperty({ description: "The user's current password; changing where prizes go needs re-auth" })
   @IsString()
   @IsNotEmpty()
-  bankAccountName: string;
+  password: string;
 }

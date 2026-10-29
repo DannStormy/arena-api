@@ -116,7 +116,6 @@ export class AsyncDuelsService {
     return {
       id: saved.id,
       code: saved.code,
-      matchSeed: saved.matchSeed,
       mode: saved.mode,
       difficulty: saved.difficulty,
       matchType: saved.matchType,
@@ -146,7 +145,6 @@ export class AsyncDuelsService {
     return {
       id: duel.id,
       code: duel.code,
-      matchSeed: duel.matchSeed,
       mode: duel.mode,
       difficulty: duel.difficulty,
       matchType: duel.matchType,
@@ -323,7 +321,6 @@ export class AsyncDuelsService {
     return {
       id: saved.id,
       code: saved.code,
-      matchSeed: saved.matchSeed,
       mode: saved.mode,
       difficulty: saved.difficulty,
       matchType: saved.matchType,

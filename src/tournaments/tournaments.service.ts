@@ -161,45 +161,44 @@ export class TournamentsService {
     tournamentId: string,
     userId: string,
   ): Promise<{ success: true; entryId: string }> {
-    const tournament = await this.tournamentsRepo
-      .createQueryBuilder('t')
-      .where('t.id = :tournamentId', { tournamentId })
-      .getOne();
+    // The row lock serialises joins per tournament, so maxPlayers can't be overshot.
+    const saved = await this.tournamentsRepo.manager.transaction(async (manager) => {
+      const tournament = await manager.getRepository(Tournament).findOne({
+        where: { id: tournamentId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    if (!tournament) {
-      throw new NotFoundException('Tournament not found');
-    }
-
-    if (tournament.status !== TournamentStatus.OPEN) {
-      throw new BadRequestException('Tournament is not open for registration');
-    }
-
-    if (tournament.maxPlayers) {
-      const entryCount = await this.entriesRepo.count({ where: { tournamentId } });
-
-      if (entryCount >= tournament.maxPlayers) {
-        throw new BadRequestException('Tournament is full');
+      if (!tournament) {
+        throw new NotFoundException('Tournament not found');
       }
-    }
 
-    const existing = await this.entriesRepo.findOne({ where: { tournamentId, userId } });
+      if (tournament.status !== TournamentStatus.OPEN) {
+        throw new BadRequestException('Tournament is not open for registration');
+      }
 
-    if (existing) {
-      throw new BadRequestException('Already registered for this tournament');
-    }
+      const entries = manager.getRepository(TournamentEntry);
+      if (tournament.maxPlayers) {
+        const entryCount = await entries.count({ where: { tournamentId } });
+        if (entryCount >= tournament.maxPlayers) {
+          throw new BadRequestException('Tournament is full');
+        }
+      }
 
-    // Free entry: no wallet debit on join.
-    const entry = this.entriesRepo.create({
-      tournamentId,
-      userId,
-      entryFeePaid: '0',
+      const existing = await entries.findOne({ where: { tournamentId, userId } });
+      if (existing) {
+        throw new BadRequestException('Already registered for this tournament');
+      }
+
+      return entries.save(entries.create({ tournamentId, userId, entryFeePaid: '0' }));
     });
-
-    const saved = await this.entriesRepo.save(entry);
 
     this.logger.log(`User ${userId} joined tournament ${tournamentId}`);
 
     return { success: true, entryId: saved.id };
+  }
+
+  async isEntered(tournamentId: string, userId: string): Promise<boolean> {
+    return (await this.entriesRepo.count({ where: { tournamentId, userId } })) > 0;
   }
 
   async cancelTournament(tournamentId: string): Promise<void> {

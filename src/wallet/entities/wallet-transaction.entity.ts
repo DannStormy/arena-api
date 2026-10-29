@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -9,6 +10,7 @@ import { Wallet } from './wallet.entity';
 import { TransactionType } from '../types/transaction-type.enum';
 
 @Entity('wallet_transactions')
+@Index('UQ_wallet_tx_reference', ['reference'], { unique: true, where: 'reference IS NOT NULL' })
 export class WalletTransaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -22,6 +22,11 @@ export const SOLO_XP_MAX_PER_EVENT = 60;
 // A perfect ~10-answer run should be worth roughly a level (levelBase 300), so
 // solo play visibly moves your level instead of creeping. Was 2 (kid-tier).
 export const SOLO_CHALLENGE_XP_PER_CORRECT = 30;
+/** Daily ceiling on solo XP so a bot that answers correctly can't climb the level board unbounded. */
+export const SOLO_XP_DAILY_CAP = 1500;
+/** Offline seeds are client-generated, so their answers are knowable: keep their share small. */
+export const OFFLINE_XP_DAILY_CAP = 300;
+const OFFLINE_SOURCE_PREFIX = 'offline:';
 
 /** Modest XP for finishing a solo trivia session (clamped by SOLO_XP_MAX_PER_EVENT). */
 export function soloTriviaXp(correctAnswers: number): number {
@@ -230,7 +235,8 @@ export class ProgressionAwardService {
    */
   async awardSoloXp(userId: string, sourceId: string, points: number): Promise<void> {
     if (!userId || !sourceId) return;
-    const pts = Math.max(0, Math.min(SOLO_XP_MAX_PER_EVENT, Math.round(points)));
+    const requested = Math.max(0, Math.min(SOLO_XP_MAX_PER_EVENT, Math.round(points)));
+    const pts = Math.min(requested, await this.soloAllowanceToday(userId, sourceId));
     if (pts === 0) return;
 
     const { values: cfg, versionId } = await this.configService.getEffective();
@@ -246,6 +252,22 @@ export class ProgressionAwardService {
 
     // Re-derive the LEVEL projection so GET /progression/me shows the new XP.
     await this.projectionService.updateForUser(userId, Ledger.LEVEL, null, cfg);
+  }
+
+  private async soloAllowanceToday(userId: string, sourceId: string): Promise<number> {
+    const offline = sourceId.startsWith(OFFLINE_SOURCE_PREFIX);
+    const [row] = await this.eventsRepo.manager.query(
+      `SELECT
+         COALESCE(SUM(points), 0)::int AS total,
+         COALESCE(SUM(points) FILTER (WHERE "sourceId" LIKE 'offline:%'), 0)::int AS offline
+       FROM progression_events
+       WHERE "userId" = $1 AND "sourceType" = 'solo' AND ledger = 'level' AND "createdAt" >= $2`,
+      [userId, startOfUtcDay()],
+    );
+    const total = Number(row?.total ?? 0);
+    const offlineTotal = Number(row?.offline ?? 0);
+    const remaining = SOLO_XP_DAILY_CAP - total;
+    return Math.max(0, offline ? Math.min(remaining, OFFLINE_XP_DAILY_CAP - offlineTotal) : remaining);
   }
 
   /**

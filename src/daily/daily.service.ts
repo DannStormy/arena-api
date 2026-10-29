@@ -8,7 +8,8 @@ import { User } from '../users/entities/user.entity';
 import { CompleteDailyDto } from './dto/complete-daily.dto';
 import { DailyResult } from './entities/daily-result.entity';
 import { DAILY_COUNT, DAILY_DIFFICULTY, DAILY_XP_BONUS } from './daily.constants';
-import { computeDailyStreak, dailyModeFor, dailySeed, utcDateString } from './daily.util';
+import { addDaysKey, computeDailyStreak, dailyModeFor, utcDateString } from './daily.util';
+import { SeedTokenService } from '../challenges/seed-token.service';
 import type { SoloXpSnapshot } from '../progression/services/progression-award.service';
 
 export interface DailyResultView {
@@ -58,22 +59,32 @@ export class DailyService {
     private readonly usersRepo: Repository<User>,
     private readonly challengeService: ChallengeService,
     private readonly progressionAward: ProgressionAwardService,
+    private readonly seedTokens: SeedTokenService,
   ) {}
 
   /** Today's playable set plus (if the user already played) their result. */
   async getDaily(userId: string, now: Date = new Date()): Promise<DailyStateView> {
     const date = utcDateString(now);
-    const matchSeed = dailySeed(date);
+    const seed = this.seedTokens.dailySeed(date);
     const mode = dailyModeFor(date);
 
     const challenges = this.challengeService.generateSet({
-      matchSeed,
+      matchSeed: seed,
       mode,
       count: DAILY_COUNT,
       difficulty: DAILY_DIFFICULTY,
     });
 
     const existing = await this.resultsRepo.findOne({ where: { userId, date } });
+
+    const matchSeed = this.seedTokens.issue({
+      seed,
+      userId,
+      mode,
+      difficulty: DAILY_DIFFICULTY,
+      count: DAILY_COUNT,
+      expiresAt: new Date(`${addDaysKey(date, 1)}T01:00:00.000Z`).getTime(),
+    });
 
     return {
       date,
@@ -99,22 +110,29 @@ export class DailyService {
     now: Date = new Date(),
   ): Promise<DailyCompleteView> {
     const date = utcDateString(now);
-    const matchSeed = dailySeed(date);
+    const matchSeed = this.seedTokens.dailySeed(date);
     const mode = dailyModeFor(date);
 
     const existing = await this.resultsRepo.findOne({ where: { userId, date } });
     if (existing) {
-      return { ...(await this.buildResultView(userId, date, existing)), alreadyPlayed: true, progression: null };
+      return {
+        ...(await this.buildResultView(userId, date, existing)),
+        alreadyPlayed: true,
+        progression: null,
+      };
     }
 
     // Server-authoritative scoring: re-derive and validate EVERY answer. The
     // client-sent total is never trusted.
     let score = 0;
     let correctCount = 0;
+    const seen = new Set<number>();
     for (const a of dto.answers) {
       if (a.index < 0 || a.index >= DAILY_COUNT) {
         throw new BadRequestException(`index ${a.index} out of range`);
       }
+      if (seen.has(a.index)) throw new BadRequestException(`index ${a.index} submitted twice`);
+      seen.add(a.index);
       const validation = this.challengeService.validateSubmission({
         matchSeed,
         mode,
@@ -138,7 +156,11 @@ export class DailyService {
       if (err instanceof QueryFailedError) {
         const raced = await this.resultsRepo.findOne({ where: { userId, date } });
         if (raced) {
-          return { ...(await this.buildResultView(userId, date, raced)), alreadyPlayed: true, progression: null };
+          return {
+            ...(await this.buildResultView(userId, date, raced)),
+            alreadyPlayed: true,
+            progression: null,
+          };
         }
       }
       throw err;
@@ -154,9 +176,15 @@ export class DailyService {
         return null;
       });
 
-    this.logger.log(`Daily result recorded: ${userId} ${date} score=${score} correct=${correctCount}`);
+    this.logger.log(
+      `Daily result recorded: ${userId} ${date} score=${score} correct=${correctCount}`,
+    );
 
-    return { ...(await this.buildResultView(userId, date, saved)), alreadyPlayed: false, progression };
+    return {
+      ...(await this.buildResultView(userId, date, saved)),
+      alreadyPlayed: false,
+      progression,
+    };
   }
 
   /** Top-20 leaderboard for a day (default today) plus the caller's own line. */
@@ -210,7 +238,10 @@ export class DailyService {
       correctCount: entity.correctCount,
       rank: above + 1,
       totalPlayers,
-      streak: computeDailyStreak(playedRows.map((r) => r.date), date),
+      streak: computeDailyStreak(
+        playedRows.map((r) => r.date),
+        date,
+      ),
     };
   }
 

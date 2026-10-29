@@ -17,20 +17,24 @@ services:
     # dist/main) only needs the compiled output, so it stays lean regardless.
     buildCommand: yarn install --frozen-lockfile --production=false && yarn build
     startCommand: node dist/main
-    healthCheckPath: /docs
+    healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV
         value: production
-      # First boot builds the schema from entities (no migration run needed).
-      # Flip to false once the schema exists (or after a pg_dump restore).
-      - key: DB_SYNCHRONIZE
-        value: "true"
+      # Migrations run on boot (migrationsRun). See DEPLOY.md "Phase 0 cut-over"
+      # before the first deploy of this config against the existing Neon DB.
       - key: DB_SSL
         value: "true" # Neon requires SSL
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: JWT_SECRET
         generateValue: true # Render generates a strong secret
+      - key: SEED_TOKEN_SECRET
+        generateValue: true # signs challenge seeds; rotating it voids in-flight sets
+      - key: SENTRY_DSN
+        sync: false # optional; error and payout alerts are off until set
+      - key: PAYSTACK_SECRET_KEY
+        sync: false # also verifies webhook signatures
       # --- set these in the dashboard (from your Neon connection string) ---
       - key: DB_HOST
         sync: false
